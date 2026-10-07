@@ -1,7 +1,7 @@
-   __pycache__/
-   *.pyc
-   .venv/
-   venv/
-   .DS_Store
-   .vscode/
-   *.mp4
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+*.mp4

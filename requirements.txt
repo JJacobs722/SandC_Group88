@@ -1,5 +1,5 @@
-   mujoco
-   numpy
-   scipy
-   matplotlib
-   opencv-python
+mujoco
+numpy
+scipy
+matplotlib
+opencv-python

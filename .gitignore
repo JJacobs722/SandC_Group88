@@ -5,4 +5,5 @@ __pycache__/
 .DS_Store
 .vscode/
 *.mp4
-.venv/
+camera_test.png
+lidar_test.png

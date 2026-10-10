@@ -63,8 +63,8 @@
   </worldbody>
 
   <actuator>
-    <velocity class="wheel_left" name="wheel_left" joint="wheel_left"/>
-    <velocity class="wheel_right" name="wheel_right" joint="wheel_right"/>
+    <velocity class="wheel_left" name="wheel_left" joint="wheel_left" kv="1"/>
+    <velocity class="wheel_right" name="wheel_right" joint="wheel_right" kv="1"/>
   </actuator>
 
   <contact>

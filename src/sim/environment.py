@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import mujoco
 
-from src.sim import config 
+from sim import config 
 
 ROOT = Path(__file__).resolve().parents[2] #works out where project folder is on computer
 

@@ -18,3 +18,4 @@ LIDAR_NOISE = 0.01 #m
 
 MARKER_ID = 0 #which marker to look for (marker 0) 
 MARKER_SIZE = 0.20 #marker size (m) - only counting marker w/out white boarder
+CAMERA_PIXEL_NOISE = 0.0 #pixels - how much each marker corner wobbles BUT WILL NEED TO CHANGE THIS IN REAL HARDWARE this is just to test for sim

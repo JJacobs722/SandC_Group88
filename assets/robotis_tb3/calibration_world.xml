@@ -1,0 +1,23 @@
+<mujoco model="camera calibration scene">     <!-- A tiny world just for calibrating the camera -->
+  <include file="turtlebot3_waffle_pi.xml"/>   <!-- The same robot, with the same front_cam -->
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+  </visual>
+
+  <asset>
+    <texture name="board_tex" type="2d" file="checkerboard.png"/>   <!-- Made by tools/make_checkerboard.py -->
+    <material name="board_mat" texture="board_tex"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" rgba="0.3 0.3 0.3 1"/>
+
+    <!-- The board floats (mocap = we can move it from code). 30 cm x 22.5 cm = 12 x 9 squares of 2.5 cm.
+         contype/conaffinity 0 = nothing bumps into it -->
+    <body name="board" mocap="true" pos="0.8 0 0.12">
+      <geom type="box" size="0.002 0.15 0.1125" material="board_mat" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

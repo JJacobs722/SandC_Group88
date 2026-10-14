@@ -13,7 +13,7 @@
 
 #NO GROUND TRUTH EVER
 
-#imports taken directly from assessment 2 file!
+#imports taken from assessment 2 file!
 import numpy as np
 import os
 import sys
@@ -22,19 +22,199 @@ import zipfile
 import matplotlib.pyplot as plt
 from PIL import Image as PILImage
 import control as ct
+from dataclasses import dataclass, field
 
 from sim.environment import Environment #connection environment class from environment file
 from sim.config import ENCODER_NOISE, LIDAR_NOISE
 
 
-def Odometry_readings():
-    env = Environment() #env object
-    theta_readings = env.get_wheel_angles() #i want wheel angles thx
+def angle_wrap(a): #wrapping the angle to include -pi and exclude pi
+    return (a + np.pi) % (2 * np.pi) - np.pi
 
-def Recursive_filter(): #used to predict&correct on x hat and p every step
-    #Kf = lqe(A, B, Qd, Rn)
-    A = 
-    B = 
-    Qd = 
-    Rn = 
-    KF = ct.lqe(A, B, Qd, Rn)
+@dataclass
+class EKF_build:
+    #platform geometry taken from model -> Needs update based on actual radius and base
+    wheel_radius: float = 0.033
+    wheel_base: float = 0.160
+    #processing dat noise fr fr
+    k_wheel: float = 1e-3 #in m, variance per m travelled per wheel
+    min_wheel_var: float = 1e-9 #keeps Q non-zero when stationary
+    q_floor: np.ndarray = field(default_factory = lambda: np.diag([1e-8, 1e-8, 1e-8]))
+    #measurement noise
+    R_range_bearing: np.ndarray = field(default_factory = lambda: np.diag([0.05**2, np.deg2rad(3)**2]))
+    R_pose: np.ndarray = field(default_factory = lambda: np.diag([0.05**2, 0.05**2, np.deg2rad(5)**2]))
+    #starting uncertainty
+    P0: np.ndarray = field(default_factory = lambda: np.diag([0.05**2, 0.05**2, np.deg2rad(5)**2]))
+    #innovation gate: chi-square of 99% confidence
+    #used for NIS comparison against threshold with 2 DOF = 9.21 and 3 DOF = 11.34
+    gate_range_bearing: float | None = 9.21
+    gate_pose: float | None = 11.34
+
+class Odometry_Wheels:
+    #turns wheel angles from encoders into per-step increments
+    def __init__(self, phi_l0: float, phi_r0: float):
+        self._prev = (phi_l0, phi_r0)
+    def increments(self, phi_l: float, phi_r: float): #left and right wheel increments
+        d1 = phi_l - self._prev[0]
+        dr = phi_r - self._prev[1]
+        self._prev = (phi_l, phi_r)
+        return d1, dr
+
+class EKF:
+    def __init__(self, x0, cfg: EKF_build | None = None, P0 = None):
+        self.cfg = cfg or EKF_build()
+        self.x = np.array(x0, dtype = float).reshape(3)
+        self.x[2] = angle_wrap(self.x[2])
+        self.P = np.array(P0 if P0 is not None else self.cfg.P0, dtype = float)
+
+        #diagnostics shit for reporting if needed
+        self.last_nis = None
+        self.last_innovation = None
+        self.last_update_accepted = None
+
+    #predicting stage aight
+    def predict(self, dphi_l: float, dphi_r: float):
+        #propogating with wheel angle increments since the last call
+        c = self.cfg #calling to EKF_build -> object call where cfg's are configure :P
+        r, L = c.wheel_radius, c.wheel_base
+        ds_l, ds_r = r*dphi_l, r*dphi_r
+        ds = 0.5*(ds_r + ds_l)
+        dth = (ds_r - ds_l) / L
+
+        th = self.x[2]
+        thm = th + 0.5*dth  #midpoint heading -> more accurate than old heading :D
+        cm, sm = np.cos(thm), np.sin(thm)
+
+        #stage propagation
+        self.x = self.x + np.array([ds * cm, ds * sm, dth])
+        self.x[2] = angle_wrap(self.x[2])
+
+        #jacobian state
+        F = np.array([[1, 0, -ds*sm], [0, 1, ds*cm], [0, 0, 1]])
+
+        #jacobian wheel arc lengths which is ds_l and ds_r
+        G = np.array([[0.5*cm + ds / (2*L) * sm, 0.5*cm - ds / (2*L) * sm],
+                      [0.5 * sm - ds / (2*L) * cm, 0.5 * sm + ds / (2*L) * cm],
+                      [-1 / L, 1 / L]])
+        Sigma_u = np.diag([c.k_wheel * abs(ds_l) + c.min_wheel_var, c.k_wheel * abs(ds_r) + c.min_wheel_var])
+        self.P = F @ self.P @ F.T + G @ Sigma_u @ G.T + c.q_floor
+        self.P = 0.5*(self.P + self.P.T)
+
+    def update_range_bearing(self, z, landmark_xy, R = None):
+
+        #z = [range, bearing] of the marker measured in robot's frame with bearing going left from robot heading
+        #landmark is the known marker position in world frame
+        #returns true if hte update was successfully applied
+
+        R = self.cfg.R_range_bearing if R is None else R
+        mx, my = landmark_xy
+        dx, dy = mx - self.x[0], my - self.x[1]
+        q = dx*dx + dy*dy
+        rho = np.sqrt(q)
+
+        if rho < 1e-6:
+            return False
+        zhat = np.array([rho, angle_wrap(np.arctan2(dy, dx) - self.x[2])])
+        H = np.array([[-dx / rho, -dy / rho, 0], [dy / q, -dx / q, -1]])
+        return self._update(np.asarray(z, float), zhat, H, R, angle_idx=(1,), gate=self.cfg.gate_range_bearing)
+
+    def update_pose(self, z, R=None):
+        #z = [x,y,theta] robot pose in world frame
+        R = self.cfg.R_pose if R is None else R
+        return self._update(np.asarray(z, float), self.x.copy(), np.eye(3), R, angle_idx=(2,), gate=self.cfg.gate_pose)
+
+    def _update(self, z, zhat, H, R, angle_idx=(), gate=None):
+        y = z - zhat
+        for i in angle_idx:
+            y[i] = angle_wrap(y[i])
+        S = H @ self.P @ H.T + R
+        nis = float(y @ np.linalg.solve(S, y))
+        self.last_innovation, self.last_nis = y, nis
+
+        if gate is not None and nis > gate:
+            self.last_update_accepted = False
+            return False
+        K = np.linalg.solve(S, H @ self.P).T
+        self.x = self.x + K @ y
+        self.x[2] = angle_wrap(self.x[2])
+        I_KH = np.eye(3) - K @ H
+        self.P = I_KH @ self.P @ I_KH.T + K @ R @ K.T
+        self.P = 0.5 * (self.P + self.P.T)
+        self.last_update_accepted = True
+        return True
+
+        #one-call API
+    def step(self, phi_l: float, phi_r: float, detection=None, landmark_xy=None, R=None):
+        #one place to call once per control tick where:
+            #phi_l and r -> absolute wheel angles in rad
+            #detection -> none if the marker is not visible otherwqise range and bearing update and pose updates
+            #landmark_xy -> known world position of marker
+            #R -> optional measurement covariance for this detection, if none then EKF_build defaults used
+        if not hasattr(self, "_odom"):
+            self._odom = Odometry_Wheels(phi_l, phi_r) #object call
+        else:
+            self.predict(*self._odom.increments(phi_l, phi_r))
+
+        if detection is not None:
+            detection = np.asarray(detection, dtype = float).ravel()
+            if detection.size == 2:
+                if landmark_xy is None:
+                    raise ValueError("range/bearing detection needs landmark_xy value")
+                self.update_range_bearing(detection, landmark_xy, R)
+            elif detection.size == 3:
+                self.update_pose(detection, R)
+            else:
+                raise ValueError("detection must have 2 (range and bearing) or 3 (pose) entries :P")
+        return self.state, self.covariance
+
+    #interface stuff
+    @property
+    def state(self):
+        #this is what the controller consumes mmm yummy
+        return self.x.copy()
+
+    @property
+    def covariance(self):
+        return self.P.copy()
+
+#cheeky self-test to see if anything dies, good for testing before merging to main
+if __name__ == "__main__":
+    # Pure-numpy sanity check: no MuJoCo needed. Run:  python ekf.py
+    rng = np.random.default_rng(0)
+    cfg = EKF_build()
+    r, L, dt = cfg.wheel_radius, cfg.wheel_base, 0.02
+    landmark = np.array([1.5, 0.0])
+ 
+    truth = np.array([0.0, 0.0, 0.0])
+    ekf = EKF(truth + [0.03, -0.03, 0.05])
+    dead = EKF(truth + [0.03, -0.03, 0.05])        # predict-only, for comparison
+    nis_log = []
+    phi_l = phi_r = 0.0                            # simulated absolute encoder angles
+    ekf.step(phi_l, phi_r)                         # first call just records the angles
+ 
+    for k in range(1500):
+        v, w = 0.12, 0.25
+        dphi_r = (v + 0.5 * w * L) * dt / r
+        dphi_l = (v - 0.5 * w * L) * dt / r
+        # true motion
+        ds, dth = v * dt, w * dt
+        truth += [ds * np.cos(truth[2] + dth / 2), ds * np.sin(truth[2] + dth / 2), dth]
+        # noisy / biased encoders
+        nl = dphi_l * (1 + 0.02 * rng.standard_normal()) * 1.01
+        nr = dphi_r * (1 + 0.02 * rng.standard_normal()) * 0.99
+        dead.predict(nl, nr)
+        phi_l += nl
+        phi_r += nr
+ 
+        z = None
+        if k % 10 == 0:                            # camera at 5 Hz
+            d = landmark - truth[:2]
+            z = [np.hypot(*d) + 0.05 * rng.standard_normal(),
+                 angle_wrap(np.arctan2(d[1], d[0]) - truth[2]) + np.deg2rad(3) * rng.standard_normal()]
+        state, cov = ekf.step(phi_l, phi_r, z, landmark)
+        if z is not None and ekf.last_update_accepted:
+            nis_log.append(ekf.last_nis)
+ 
+    print("EKF  position error [m]:", np.linalg.norm(ekf.x[:2] - truth[:2]))
+    print("Dead-reckoning error [m]:", np.linalg.norm(dead.x[:2] - truth[:2]))
+    print("Mean NIS (should be ~2):", np.mean(nis_log))

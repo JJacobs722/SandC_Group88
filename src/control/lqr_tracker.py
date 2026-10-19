@@ -2,6 +2,12 @@ import numpy as np
 from scipy.linalg import solve_discrete_are
 from scipy.signal import cont2discrete
 
+# Waffle Pi
+R_WHEEL = 0.033
+TRACK = 0.288
+V_MAX, W_MAX = 0.26, 1.82
+WHEEL_MAX = 7.88          # actuator ctrlrange, rad/s
+
 def wrap(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
 
@@ -25,14 +31,27 @@ def lqr_gain(v_r, w_r, dt, Q, R):
     P = solve_discrete_are(Ad, Bd, Q, R)
     return np.linalg.solve(R + Bd.T @ P @ Bd, Bd.T @ P @ Ad)
 
-def control(x_hat, ref, Q, R, dt, v_max=0.22, w_max=2.84):
-    """x_hat: ESTIMATED [x, y, theta]. ref: [xr, yr, thr, vr, wr]."""
+def control(x_hat, ref, Q, R, dt, v_max=V_MAX, w_max=W_MAX):
+    """x_hat: ESTIMATED [x, y, theta]. ref: [xr, yr, thr, vr, wr].
+    Returns (v, w) in m/s and rad/s."""
     x, y, th = x_hat
     xr, yr, thr, vr, wr = ref
+
     dx, dy = xr - x, yr - y
     e = np.array([ np.cos(th) * dx + np.sin(th) * dy,
                   -np.sin(th) * dx + np.cos(th) * dy,
                    wrap(thr - th)])
+
+    # error model loses controllability when the reference is stopped
+    if abs(vr) < 1e-3 and abs(wr) < 1e-3:
+        vr = 1e-3
+
     K = lqr_gain(vr, wr, dt, Q, R)
     u = np.array([vr, wr]) - K @ e
     return np.clip(u, [-v_max, -w_max], [v_max, w_max])
+
+def to_wheels(v, w):
+    """(v, w) -> [left, right] wheel speeds in rad/s, matching actuator order."""
+    wl = (v - w * TRACK / 2) / R_WHEEL
+    wr = (v + w * TRACK / 2) / R_WHEEL
+    return np.clip([wl, wr], -WHEEL_MAX, WHEEL_MAX)

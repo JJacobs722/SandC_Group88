@@ -89,8 +89,8 @@ class Environment:
         """3x3 camera matrix K (pixels)."""
         fovy = math.radians(self.m.cam_fovy[self.m.camera(config.CAMERA_NAME).id])
         f = (config.CAMERA_HEIGHT / 2) / math.tan(fovy / 2) #works out the focal length in pixels --> "how zoomed in camera is"
-        return np.array([[f, 0, config.CAMERA_WIDTH - 1 / 2], #builds K matrix (how the camera is described)
-                         [0, f, config.CAMERA_HEIGHT - 1 / 2],
+        return np.array([[f, 0, (config.CAMERA_WIDTH - 1) / 2], #builds K matrix (how the camera is described)
+                         [0, f, (config.CAMERA_HEIGHT - 1) / 2],
                          [0, 0, 1]])
 
     def get_lidar(self): #gets where the red dot is in the world rn

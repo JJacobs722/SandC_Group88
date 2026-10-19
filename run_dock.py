@@ -8,9 +8,9 @@ import mujoco
 import mujoco.viewer
 
 ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "src"))     # so the EKF file's own `from sim...` imports work
+sys.path.insert(0, str(ROOT / "src"))     # add src to path
 
-# load the EKF file from src/estimation by content (its filename has changed between branches)
+# find and load the EKF file
 _cands = [p for p in (ROOT / "src" / "estimation").glob("*.py")
           if "class EKF" in p.read_text(errors="ignore")]
 if not _cands:
@@ -36,12 +36,12 @@ env = Environment(seed=0)
 START = (0.0, 0.0, 0.0)                  # assumed start pose
 env.reset(*START)
 
-dock = env.get_dock_position()           # known landmark the EKF needs (state as an assumption)
+dock = env.get_dock_position()           # dock position (known map)
 K_cam = env.get_camera_intrinsics()
 dt = config.CONTROL_DT
 
 cfg = EKF_build(wheel_radius=0.033, wheel_base=0.288)
-ekf = EKF(np.array(START) + [0.03, -0.03, 0.05], cfg)   # perturbed guess, not ground truth
+ekf = EKF(np.array(START) + [0.03, -0.03, 0.05], cfg)   # start the EKF slightly off on purpose
 ekf.step(*env.get_wheel_angles())
 
 STANDOFF, STOP_DIST = 0.60, 0.25
@@ -59,10 +59,10 @@ lidar_every = round(0.1 / dt)            # LiDAR 10 Hz
 
 
 def draw_estimate(viewer, x_hat, P):
-    """Green dot = EKF estimate, green flat ellipse = 2-sigma position uncertainty. Display only."""
+    # green dot = EKF estimate, green ellipse = uncertainty (display only)
     scn = viewer.user_scn
     vals, vecs = np.linalg.eigh(P[:2, :2])
-    axes = 2.0 * np.sqrt(np.maximum(vals, 1e-8))          # 2-sigma semi-axes (m)
+    axes = 2.0 * np.sqrt(np.maximum(vals, 1e-8))          # 2 sigma
     rot = np.eye(3)
     rot[:2, :2] = vecs
     mujoco.mjv_initGeom(scn.geoms[0], mujoco.mjtGeom.mjGEOM_SPHERE,
@@ -81,7 +81,7 @@ misses, k, log = 0, 0, []
 docked = False
 
 with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
-    viewer.cam.lookat[:] = [0.0, 0.0, 0.0]       # room overview; drag with the mouse to change
+    viewer.cam.lookat[:] = [0.0, 0.0, 0.0]       # top down view of room
     viewer.cam.distance = 6.5
     viewer.cam.azimuth = 90
     viewer.cam.elevation = -70
@@ -89,15 +89,20 @@ with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
     while viewer.is_running() and env.time < T_MAX:
         t0 = time.time()
 
+        # ---- sensing ----
         if k % lidar_every == 0:
             angles, ranges = env.get_lidar()
+
+        # ---- perception ----
         det = detect_marker(env.get_camera_image(), K_cam) if k % cam_every == 0 else None
         R_meas = measurement_covariance(det[0]) if det is not None else None
+
+        # ---- estimation ----
         x_hat, P = ekf.step(*env.get_wheel_angles(), det, dock, R_meas)
         if det is not None:
             misses = 0 if ekf.last_update_accepted else misses + 1
 
-        # phase logic uses the ESTIMATE only
+        # ---- control (only uses the estimate) ----
         if phase == 0 and np.hypot(*(goal - x_hat[:2])) < 0.10:
             phase, goal = 1, stop_pt
         if phase == 1 and np.hypot(*(stop_pt - x_hat[:2])) < 0.04:
@@ -107,13 +112,13 @@ with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
 
         ref, v_cap, info = nav.plan(x_hat, goal, angles, ranges, dock,
                                     v_max=0.15 if phase == 0 else 0.08)
-        v, w = control(x_hat, ref, Q, Rw, dt)            # LQR on the ESTIMATED state
-        v = float(np.clip(v, 0.0, v_cap))                # LiDAR speed governor, no reversing
+        v, w = control(x_hat, ref, Q, Rw, dt)            # LQR
+        v = float(np.clip(v, 0.0, v_cap))                # lidar speed cap, no reversing
         wl, wr = to_wheels(v, w)
         env.set_wheel_speeds(wl, wr)
         env.step()
 
-        # ---- EVALUATION ONLY: nothing here feeds back into the controller ----
+        # ---- evaluation only (ground truth never goes back into control) ----
         gt = env.get_ground_truth()
         e = gt - x_hat
         e[2] = angle_wrap(e[2])
@@ -139,7 +144,7 @@ with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
         print(f"t={log[-1,0]:.1f}s  est err {log[-1,1]:.3f} m  mean NEES {log[:,2].mean():.2f} "
               f"min lidar range {log[:,3].min():.2f} m")
 
-    # keep the window open after the run until you close it
+    # keep window open at the end
     while viewer.is_running():
         viewer.sync()
         time.sleep(0.05)

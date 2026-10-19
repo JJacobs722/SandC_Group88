@@ -14,18 +14,10 @@
 #NO GROUND TRUTH EVER
 
 #imports taken from assessment 2 file!
+from __future__ import annotations  # so 'float | None' works on older python
 import numpy as np
-import os
-import sys
-import time
-import zipfile
-import matplotlib.pyplot as plt
-from PIL import Image as PILImage
-import control as ct
 from dataclasses import dataclass, field
 
-from sim.environment import Environment #connection environment class from environment file
-from sim.config import ENCODER_NOISE, LIDAR_NOISE
 
 
 def angle_wrap(a): #wrapping the angle to include -pi and exclude pi

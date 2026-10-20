@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import mujoco
 
-from sim import config 
+from src.sim import config
 
 ROOT = Path(__file__).resolve().parents[2] #works out where project folder is on computer
 
@@ -105,9 +105,9 @@ class Environment:
                 ranges[i] = dist + self.rng.normal(0, config.LIDAR_NOISE)
         return self.lidar_angles, ranges
 
-    # ---------- known map ----------
+    # ---------- known map (no longer used by the robot, only by old tools) ----------
     def get_dock_position(self):
-        """Known landmark position (x, y) in the world frame. This is the map, not ground truth."""
+        """Dock position (x, y) in the world frame. The robot no longer uses this: it finds the marker itself."""
         return self.m.body("dock").pos[:2].copy()
 
     # ---------- EVALUATION ONLY ----------
@@ -120,3 +120,30 @@ class Environment:
         w, qx, qy, qz = self.d.qpos[a + 3:a + 7]
         yaw = math.atan2(2 * (w * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
         return np.array([x, y, yaw])
+
+
+    def marker_frame_in_world(self):
+        """EVALUATION / DISPLAY ONLY. Where the marker's face is in the world, and which way it points.
+        Returns ((x, y), angle). The robot never uses this; we use it to grade it and to draw on screen."""
+        g = self.m.geom("dock_marker").id
+        rot = self.d.geom_xmat[g].reshape(3, 3)
+        normal = -rot[:2, 0]                                  # the face that looks into the room
+        normal = normal / np.linalg.norm(normal)
+        centre = self.d.geom_xpos[g][:2] + self.m.geom_size[g][0] * normal
+        return centre, math.atan2(normal[1], normal[0])
+
+    def get_ground_truth_marker_frame(self):
+        """EVALUATION ONLY. True (x, y, yaw) measured from the marker: marker at (0, 0), face along +x.
+        Same frame the EKF uses, so the two can be compared."""
+        (cx, cy), psi = self.marker_frame_in_world()
+        x, y, yaw = self.get_ground_truth()
+        dx, dy = x - cx, y - cy
+        c, s = math.cos(psi), math.sin(psi)
+        return np.array([c * dx + s * dy, -s * dx + c * dy,
+                         (yaw - psi + math.pi) % (2 * math.pi) - math.pi])
+
+    def marker_to_world(self, xy):
+        """DISPLAY ONLY. Turn a marker-frame point into world coordinates so it can be drawn."""
+        (cx, cy), psi = self.marker_frame_in_world()
+        c, s = math.cos(psi), math.sin(psi)
+        return np.array([cx + c * xy[0] - s * xy[1], cy + s * xy[0] + c * xy[1]])

@@ -115,6 +115,23 @@ class EKF:
         R = self.cfg.R_pose if R is None else R
         return self._update(np.asarray(z, float), self.x.copy(), np.eye(3), R, angle_idx=(2,), gate=self.cfg.gate_pose)
 
+    def update_marker(self, z, R):
+        #z = [range, bearing, facing] of the marker seen from the robot
+        #the world frame IS the marker frame: marker at (0,0), its face pointing along +x
+        #so no map is needed, the marker defines where (0,0) is
+        x, y, th = self.x
+        q = x*x + y*y
+        rho = np.sqrt(q)
+        if rho < 1e-6:
+            return False
+        zhat = np.array([rho,
+                         angle_wrap(np.arctan2(-y, -x) - th),   #direction to the marker
+                         angle_wrap(-th)])                      #marker face points along +x
+        H = np.array([[x / rho, y / rho, 0],
+                      [-y / q, x / q, -1],
+                      [0, 0, -1]])
+        return self._update(np.asarray(z, float), zhat, H, R, angle_idx=(1, 2), gate=self.cfg.gate_pose)
+
     def _update(self, z, zhat, H, R, angle_idx=(), gate=None):
         y = z - zhat
         for i in angle_idx:
@@ -139,7 +156,8 @@ class EKF:
     def step(self, phi_l: float, phi_r: float, detection=None, landmark_xy=None, R=None):
         #one place to call once per control tick where:
             #phi_l and r -> absolute wheel angles in rad
-            #detection -> none if the marker is not visible otherwqise range and bearing update and pose updates
+            #detection -> none if the marker is not visible, (range, bearing) with landmark_xy,
+            #             or (range, bearing, facing) in the marker frame
             #landmark_xy -> known world position of marker
             #R -> optional measurement covariance for this detection, if none then EKF_build defaults used
         if not hasattr(self, "_odom"):
@@ -154,7 +172,8 @@ class EKF:
                     raise ValueError("range/bearing detection needs landmark_xy value")
                 self.update_range_bearing(detection, landmark_xy, R)
             elif detection.size == 3:
-                self.update_pose(detection, R)
+                #[range, bearing, facing] of the marker, marker frame
+                self.update_marker(detection, R)
             else:
                 raise ValueError("detection must have 2 (range and bearing) or 3 (pose) entries :P")
         return self.state, self.covariance
@@ -168,6 +187,31 @@ class EKF:
     @property
     def covariance(self):
         return self.P.copy()
+
+def pose_from_marker(z):
+    #one sighting [range, bearing, facing] -> robot pose (x, y, theta) in the marker frame
+    r, b, f = z
+    th = angle_wrap(-f)                         #marker face is +x, so robot heading = -facing
+    px, py = r * np.cos(b), r * np.sin(b)       #marker position seen from the robot
+    c, s = np.cos(th), np.sin(th)
+    return np.array([-(c * px - s * py), -(s * px + c * py), th])
+
+
+def start_from_marker(z, R, cfg=None):
+    #start the EKF from the first good sighting, no guess of the start needed
+    #P0 comes from pushing the measurement noise R through pose_from_marker (numerical jacobian)
+    z = np.asarray(z, float)
+    x0 = pose_from_marker(z)
+    J = np.zeros((3, 3))
+    for i in range(3):
+        dz = np.zeros(3)
+        dz[i] = 1e-6
+        d = pose_from_marker(z + dz) - x0
+        d[2] = angle_wrap(d[2])
+        J[:, i] = d / 1e-6
+    P0 = J @ np.asarray(R, float) @ J.T + np.diag([1e-4, 1e-4, 1e-4])
+    return EKF(x0, cfg, P0=P0)
+
 
 #cheeky self-test to see if anything dies, good for testing before merging to main
 if __name__ == "__main__":

@@ -43,7 +43,8 @@ env.reset(*PLACE)
 K_cam = env.get_camera_intrinsics()
 dt = config.CONTROL_DT
 # calibrated wheel numbers (tools/calibrate_wheels.py), k_wheel tuned in evaluate.py
-cfg = EKF_build(wheel_radius=0.0281, wheel_base=0.351, k_wheel=5e-3)
+# k_turn: the waffle shuffles about 6 cm when it spins on the spot (tools/turn_slip.py)
+cfg = EKF_build(wheel_radius=0.0281, wheel_base=0.351, k_wheel=5e-3, k_turn=5e-4)
 
 # before the marker is seen the robot only has its wheels, in its own start frame
 odom = EKF([0.0, 0.0, 0.0], cfg)          # start frame: "wherever I started is (0, 0)"

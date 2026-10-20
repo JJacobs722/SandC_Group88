@@ -31,6 +31,7 @@ class EKF_build:
     #processing dat noise fr fr
     k_wheel: float = 1e-3 #in m, variance per m travelled per wheel
     min_wheel_var: float = 1e-9 #keeps Q non-zero when stationary
+    k_turn: float = 0.0 #m^2 per rad turned: the waffle shuffles sideways when it turns, the wheels can't see this
     q_floor: np.ndarray = field(default_factory = lambda: np.diag([1e-8, 1e-8, 1e-8]))
     #measurement noise
     R_range_bearing: np.ndarray = field(default_factory = lambda: np.diag([0.05**2, np.deg2rad(3)**2]))
@@ -90,6 +91,9 @@ class EKF:
                       [-1 / L, 1 / L]])
         Sigma_u = np.diag([c.k_wheel * abs(ds_l) + c.min_wheel_var, c.k_wheel * abs(ds_r) + c.min_wheel_var])
         self.P = F @ self.P @ F.T + G @ Sigma_u @ G.T + c.q_floor
+        #turning slip: the body sits behind the wheels and drags, so turning moves the robot a bit
+        #in a direction the wheel model doesn't predict. grow the position uncertainty with |turn|
+        self.P[:2, :2] += c.k_turn * abs(dth) * np.eye(2)
         self.P = 0.5*(self.P + self.P.T)
 
     def update_range_bearing(self, z, landmark_xy, R = None):

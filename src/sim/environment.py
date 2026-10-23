@@ -93,6 +93,15 @@ class Environment:
                          [0, f, (config.CAMERA_HEIGHT - 1) / 2],
                          [0, 0, 1]])
 
+    def get_camera_mount(self):
+        """(forward, left) of the camera from the robot's centre, in metres. Read from the robot file."""
+        p = self.m.cam_pos[self.m.camera(config.CAMERA_NAME).id]
+        return float(p[0]), float(p[1])
+
+    def get_camera_distortion(self):
+        """Lens distortion. A simulated camera has none."""
+        return np.zeros(5)
+
     def get_lidar(self): #gets where the red dot is in the world rn
         """Returns (angles in rad, ranges in m). No hit = inf. Angles are in the robot frame."""
         origin = self.d.site_xpos[self._lidar_site].copy()

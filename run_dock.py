@@ -1,11 +1,16 @@
 import sys
+import csv
 import time
+import contextlib
 import importlib.util
 from pathlib import Path
 
 import numpy as np
-import mujoco
-import mujoco.viewer
+
+REAL = "--real" in sys.argv               # python run_dock.py --real  -> real TurtleBot instead of the sim
+if not REAL:
+    import mujoco
+    import mujoco.viewer
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))     # add src to path
@@ -23,28 +28,40 @@ _spec.loader.exec_module(ekf_module)
 EKF, EKF_build, angle_wrap = ekf_module.EKF, ekf_module.EKF_build, ekf_module.angle_wrap
 start_from_marker = ekf_module.start_from_marker
 
-from src.sim.environment import Environment
 from src.sim import config
-from src.perception.marker import detect_marker_pose, marker_covariance
+from src.perception.marker import detect_marker_pose, marker_covariance, set_camera_setup
 from src.control.lqr_tracker import control, to_wheels
 from src.control.lidar_nav import LidarNavigator
 from src.control.search import MarkerSearch
 
-REALTIME = True          # False = run as fast as possible
+REALTIME = not REAL      # False = run as fast as possible (the real robot keeps its own time in step())
 T_MAX = 180.0
 
 # where WE put the robot in the room. The robot is NOT told this. Change it to try anywhere.
 PLACE = (0.0, 0.0, 0.0)
 
 # ---------------- setup ----------------
-env = Environment(seed=0)
+# the ONLY difference between sim and real robot: which class env is. Everything below is the same.
+if REAL:
+    from src.hw.real_robot import RealRobot
+    from src.hw import hw_config as hw
+    env = RealRobot()
+else:
+    from src.sim.environment import Environment
+    env = Environment(seed=0)
 env.reset(*PLACE)
 
 K_cam = env.get_camera_intrinsics()
+set_camera_setup(*env.get_camera_mount(), env.get_camera_distortion(),
+                 marker_size=hw.MARKER_SIZE if REAL else None)
 dt = config.CONTROL_DT
-# calibrated wheel numbers (tools/calibrate_wheels.py), k_wheel tuned in evaluate.py
-# k_turn: the waffle shuffles about 6 cm when it spins on the spot (tools/turn_slip.py)
-cfg = EKF_build(wheel_radius=0.0281, wheel_base=0.351, k_wheel=5e-3, k_turn=5e-4)
+if REAL:
+    # real robot numbers: spec values until tools/calibrate_wheels_real.py is run
+    cfg = EKF_build(wheel_radius=hw.WHEEL_RADIUS, wheel_base=hw.WHEEL_BASE, k_wheel=hw.K_WHEEL, k_turn=hw.K_TURN)
+else:
+    # calibrated wheel numbers (tools/calibrate_wheels.py), k_wheel tuned in evaluate.py
+    # k_turn: the waffle shuffles about 6 cm when it spins on the spot (tools/turn_slip.py)
+    cfg = EKF_build(wheel_radius=0.0281, wheel_base=0.351, k_wheel=5e-3, k_turn=5e-4)
 
 # before the marker is seen the robot only has its wheels, in its own start frame
 odom = EKF([0.0, 0.0, 0.0], cfg)          # start frame: "wherever I started is (0, 0)"
@@ -97,12 +114,29 @@ k, log = 0, []
 rejects = 0
 docked = False
 found_at = None
+run_log = []                             # real robot: everything the robot itself knew, saved to a CSV
 
-with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
-    viewer.cam.lookat[:] = [0.0, 0.0, 0.0]       # top down view of room
-    viewer.cam.distance = 6.5
-    viewer.cam.azimuth = 90
-    viewer.cam.elevation = -70
+
+class NoViewer:
+    # the real robot has no MuJoCo window
+    def is_running(self):
+        return True
+
+    def sync(self):
+        pass
+
+    def lock(self):
+        return contextlib.nullcontext()
+
+
+viewer_ctx = contextlib.nullcontext(NoViewer()) if REAL else mujoco.viewer.launch_passive(env.m, env.d)
+try:
+  with viewer_ctx as viewer:
+    if not REAL:
+        viewer.cam.lookat[:] = [0.0, 0.0, 0.0]       # top down view of room
+        viewer.cam.distance = 6.5
+        viewer.cam.azimuth = 90
+        viewer.cam.elevation = -70
 
     while viewer.is_running() and env.time < T_MAX:
         t0 = time.time()
@@ -166,15 +200,21 @@ with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
         env.set_wheel_speeds(wl, wr)
         env.step()
 
+        if REAL:
+            run_log.append([round(env.time, 3), search.mode if ekf is None else f"dock{phase}", int(det is not None),
+                            *(np.round(x_hat, 4) if x_hat is not None else ["", "", ""]),
+                            *(np.round(np.sqrt(np.diag(P)), 4) if P is not None else ["", "", ""]),
+                            round(v, 3), round(w, 3)])
+
         # ---- evaluation only (ground truth never goes back into control) ----
-        if ekf is not None:
+        if ekf is not None and not REAL:
             gt = env.get_ground_truth_marker_frame()
             e = gt - x_hat
             e[2] = angle_wrap(e[2])
             log.append((env.time, np.hypot(*e[:2]), float(e @ np.linalg.solve(P, e))))
 
         with viewer.lock():
-            if ekf is not None:
+            if ekf is not None and not REAL:
                 draw_estimate(viewer, x_hat, P)
         viewer.sync()
 
@@ -193,6 +233,17 @@ with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
 
     print(f"\ndocked={docked}  time={env.time:.1f}s  marker found at "
           f"{'never' if found_at is None else f'{found_at:.1f}s'}")
+    if REAL:
+        out = ROOT / "results" / f"real_run_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+        out.parent.mkdir(exist_ok=True)
+        with open(out, "w", newline="") as f:
+            wcsv = csv.writer(f)
+            wcsv.writerow(["t", "mode", "marker_seen", "x", "y", "theta", "sd_x", "sd_y", "sd_theta", "v", "w"])
+            wcsv.writerows(run_log)
+        print(f"saved {out}. Measure the robot's final distance from the marker with a tape: that's the real result.")
+        if x_hat is not None:
+            print(f"robot thinks it stopped at ({x_hat[0]:.3f}, {x_hat[1]:.3f}) m from the marker, "
+                  f"target was ({stop_pt[0]:.2f}, {stop_pt[1]:.2f})")
     if log:
         log = np.array(log)
         gt = env.get_ground_truth_marker_frame()
@@ -201,6 +252,9 @@ with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
               f"true distance to stop point {np.hypot(*(gt[:2] - stop_pt)):.3f} m")
 
     # keep window open at the end
-    while viewer.is_running():
+    while viewer.is_running() and not REAL:
         viewer.sync()
         time.sleep(0.05)
+finally:
+    if REAL:
+        env.close()                      # always stop the motors, even after Ctrl+C or an error

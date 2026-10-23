@@ -7,3 +7,5 @@ __pycache__/
 *.mp4
 camera_test.png
 lidar_test.png
+hw_camera.png
+hw_lidar.png

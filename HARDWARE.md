@@ -8,33 +8,38 @@ python run_dock.py --real   # real robot (src/hw/real_robot.py)
 ```
 
 Perception, the EKF, the search, LiDAR navigation and LQR are exactly the same code. `RealRobot` has the
-same methods as `Environment`, but talks to the robot over ROS 2 instead of MuJoCo.
+same methods as `Environment`, but talks to the robot over Wi-Fi using the UTS library
+[UTS-RI/turtlebot_rosbridge](https://github.com/UTS-RI/turtlebot_rosbridge) (`RosbridgeRobot`) instead of MuJoCo.
 
-| Method | Simulation | Real robot |
+| Method | Simulation | Real robot (`RosbridgeRobot`) |
 | --- | --- | --- |
-| `set_wheel_speeds(l, r)` | MuJoCo motors | `/cmd_vel` (converted to forward speed + turn rate) |
-| `get_wheel_angles()` | MuJoCo wheel joints | `/joint_states` |
-| `get_lidar()` | 360 MuJoCo rays | `/scan`, re-centred on the wheel axle, 360 x 1 deg |
-| `get_camera_image()` | MuJoCo render | camera topic (raw or compressed) |
+| `set_wheel_speeds(l, r)` | MuJoCo motors | `send_command(forward, turn)` on `/cmd_vel` |
+| `get_wheel_angles()` | MuJoCo wheel joints | `query_joint_states()` from `/joint_states` |
+| `get_lidar()` | 360 MuJoCo rays | `query_laser_scan()` from `/scan`, re-centred on the wheel axle, 360 x 1 deg |
+| `get_camera_image()` | MuJoCo render | `query_image()` from `/camera/image_raw/compressed` (BGR, converted to RGB) |
 | `get_camera_intrinsics()` | from the 60 deg field of view | from `camera_calibration_real.npz` |
 | `get_ground_truth()` | MuJoCo | doesn't exist: measure with a tape |
 
 ## What you need
 
-- A computer with **ROS 2** and `rclpy` (usually the lab's Ubuntu machines). `rclpy` can't be pip-installed.
-  Then in this repo: `pip install numpy scipy opencv-python matplotlib`. MuJoCo isn't needed for `--real`.
-- The robot powered on, on the same network, running its bringup and camera node
-  (the lab will show you, usually `ros2 launch turtlebot3_bringup robot.launch.py`).
-- The same `ROS_DOMAIN_ID` on the laptop as the robot (ask at the induction).
-- A printed ArUco marker: `assets/robotis_tb3/aruco_0.png` (ID 0, DICT_4X4_50), taped flat to a wall at camera height.
+- **Any laptop** (Windows, Mac or Linux). No ROS needed: the robot runs ROS 2 Humble and a rosbridge server,
+  and the laptop just connects over Wi-Fi.
+- In this repo's venv, install the UTS library once:
+  `pip install "git+https://github.com/UTS-RI/turtlebot_rosbridge.git"` (or clone it and `pip install .`)
+- Join the robot's Wi-Fi network (name and password are in the UTS-RI/turtlebot_rosbridge README).
+- Your robot's IP: `192.168.1.2XX`, where XX is the TurtleBot's number. Put it in `ROBOT_IP` in
+  `src/hw/hw_config.py`, or add `--ip=192.168.1.2XX` to any command.
+- Sign out the robot and a battery (ask at the lab).
+- A printed ArUco marker, taped flat to a wall at camera height.
   **Print `aruco_0_print.png`** from `python -m tools.make_marker_print`, not `aruco_0.png`: that one is
   mirrored on purpose for MuJoCo and won't be detected on paper.
 - A tape measure, masking tape, the checkerboard printout (`assets/robotis_tb3/checkerboard.png`).
 
 ## Steps at the lab (in order)
 
-1. **Check the topics.** `ros2 topic list` should show `/cmd_vel`, `/joint_states`, `/scan` and a camera topic.
-   If any names differ, change them in `src/hw/hw_config.py`.
+1. **Check the connection with the UTS examples** (from the turtlebot_rosbridge folder):
+   `python examples/camera.py 192.168.1.2XX`, `python examples/laser_scan.py 192.168.1.2XX`, and
+   `python examples/teleop.py 192.168.1.2XX` (W/S/A/D, Space stops). If these work, ours will.
 2. **Sensor check, robot still:** `python -m tools.hw_check`. Look at `hw_camera.png` and `hw_lidar.png`.
 3. **Motor check:** `python -m tools.hw_check --move`. It drives about 10 cm then turns left. If it turns
    right, the wheel names in `WHEEL_JOINTS` are swapped.
@@ -60,19 +65,19 @@ same methods as `Environment`, but talks to the robot over ROS 2 instead of MuJo
 
 | Problem | Likely cause | Fix |
 | --- | --- | --- |
-| `No module named 'rclpy'` | ROS 2 not set up in this terminal | `source /opt/ros/<distro>/setup.bash` first |
-| `No data from: ...` | Robot bringup not running, wrong topic name or `ROS_DOMAIN_ID` | check `ros2 topic list` and `ros2 topic hz /scan` |
-| Robot doesn't move | `/cmd_vel` type mismatch | the code picks Twist or TwistStamped automatically; check `ros2 topic info /cmd_vel` |
+| `No module named 'rosbridge_api'` | UTS library not installed in this venv | `pip install "git+https://github.com/UTS-RI/turtlebot_rosbridge.git"` |
+| `Could not connect to rosbridge` | Not on the robot's Wi-Fi, wrong IP, or robot still booting | check the Wi-Fi and IP; try `examples/camera.py` first |
+| `No data from: wheels` | Wheel joint names differ | print `query_joint_states()` and update `WHEEL_JOINTS` in `hw_config.py` |
 | Marker never seen | Printed the flipped marker, bad lighting, or no calibration file | print the unflipped one; run `calibrate_camera_real` |
 | Marker distance wrong | `MARKER_SIZE` or calibration wrong | re-measure the black square; recalibrate |
-| Robot stops and starts | "no recent lidar data" warnings: Wi-Fi lag | move closer to the router, or run on the robot's own computer |
+| Robot stops and starts | "no recent ... data" warnings: Wi-Fi lag | move closer to the robot; raise `STALE_AFTER` a little |
 | Docks but off to one side | `CAM_LEFT` not measured (Waffle Pi cameras can sit off-centre) | measure it and update `hw_config.py` |
 
 ## How this was tested before lab day
 
-There's no robot in the simulation, so `RealRobot` was tested against a fake ROS 2 layer that was really the
-MuJoCo sim sending real-robot-style messages (JPEG camera frames, a 0..360 deg LaserScan with 0 meaning
-"no return", Twist commands, `/joint_states`). The full `run_dock.py --real` pipeline searched, found the
-marker and docked 3.0 cm from the target through that layer. `tools/hw_check.py` and
-`tools/calibrate_wheels_real.py` were run the same way. The real robot will still need the
-measurements above.
+There's no robot in the simulation, so `RealRobot` was tested with the UTS `RosbridgeRobot` library running
+unchanged, connected to a fake rosbridge that was really the MuJoCo sim sending the same messages the robot
+sends (base64 JPEG camera frames, a 0..360 deg LaserScan at 5 Hz with 0 meaning "no return",
+`/joint_states`, Twist commands). The full `run_dock.py --real` pipeline searched, found the marker and
+docked 2.3 cm from the target through it. `tools/hw_check.py --move` ran the same way. The real robot will
+still need the measurements above.

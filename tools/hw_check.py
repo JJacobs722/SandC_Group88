@@ -2,6 +2,7 @@
 
   python -m tools.hw_check          sensors only, the robot does NOT move
   python -m tools.hw_check --move   also drives about 10 cm forward then turns about 45 deg, slowly
+  add --ip=192.168.1.2XX to either if your robot isn't the one in hw_config.py
 
 Saves hw_camera.png (what the camera sees) and hw_lidar.png (the scan from above).
 Keep a hand near the robot's power switch for the --move test.
@@ -39,7 +40,7 @@ try:
     # ---- camera ----
     img = env.get_camera_image()
     cv2.imwrite("hw_camera.png", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-    print(f"camera: {img.shape[1]} x {img.shape[0]} from {env.camera_topic}, saved hw_camera.png")
+    print(f"camera: {img.shape[1]} x {img.shape[0]}, saved hw_camera.png")
     try:
         from src.perception.marker import detect_marker_pose, set_camera_setup
         from src.hw import hw_config as hw

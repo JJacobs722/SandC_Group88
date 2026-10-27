@@ -3,19 +3,18 @@
 run_dock.py only ever calls these methods, so swapping the simulator for the real robot is
 one line:   env = Environment(seed=0)   ->   env = RealRobot()
 
-Talks to the robot over ROS 2 (needs a machine with ROS 2 and rclpy installed, on the same
-network and ROS_DOMAIN_ID as the robot). The robot itself must be running its bringup
-(on the robot:  ros2 launch turtlebot3_bringup robot.launch.py  plus the camera node).
+Uses the UTS rosbridge library (github.com/UTS-RI/turtlebot_rosbridge), which talks to the robot
+over Wi-Fi. No ROS needed on the laptop, so it works on Windows and Mac.
+  pip install "git+https://github.com/UTS-RI/turtlebot_rosbridge.git"
 
-  sim method                    real robot
-  set_wheel_speeds(l, r)  ->    /cmd_vel   (converted to forward speed + turn rate)
-  get_wheel_angles()      ->    /joint_states
-  get_lidar()             ->    /scan      (re-centred on the wheel axle, 360 x 1 deg)
-  get_camera_image()      ->    camera topic (raw or compressed)
+  sim method                    real robot (RosbridgeRobot)
+  set_wheel_speeds(l, r)  ->    send_command(forward m/s, turn rad/s)
+  get_wheel_angles()      ->    query_joint_states()
+  get_lidar()             ->    query_laser_scan(), re-centred on the wheel axle, 360 x 1 deg
+  get_camera_image()      ->    query_image()
   get_ground_truth()      ->    doesn't exist on a real robot
 """
-import math
-import threading
+import sys
 import time
 from pathlib import Path
 
@@ -29,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 N_BEAMS = 360
 
 
-# ---------------- pure helpers (no ROS needed, tested on their own) ----------------
+# ---------------- pure helpers (no robot needed, tested on their own) ----------------
 def wheels_to_twist(left, right):
     """Wheel speeds (rad/s) -> (forward m/s, turn rad/s), clipped to the robot's limits and the safety scale."""
     v = R_WHEEL * (left + right) / 2
@@ -39,7 +38,7 @@ def wheels_to_twist(left, right):
             float(np.clip(w * s, -hw.MAX_ANGULAR, hw.MAX_ANGULAR)))
 
 
-def scan_to_robot_frame(angle_min, angle_increment, ranges, range_min, range_max, lidar_forward=hw.LIDAR_FORWARD):
+def scan_to_robot_frame(angle_min, angle_increment, ranges, range_min, range_max, lidar_forward):
     """A LaserScan -> (angles, ranges) like the sim: 360 beams, 1 deg apart, -180..179 deg,
     measured from the wheel axle midpoint (the point the EKF tracks). No return = inf."""
     r = np.asarray(ranges, float)
@@ -56,68 +55,31 @@ def scan_to_robot_frame(angle_min, angle_increment, ranges, range_min, range_max
     return angles, out
 
 
-def decode_image(msg_format, data, width=None, height=None, encoding=None):
-    """ROS image -> RGB uint8 array (H, W, 3), or None if it can't be read."""
-    buf = np.frombuffer(bytes(data), np.uint8)
-    if msg_format is not None:                          # CompressedImage
-        bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-        return None if bgr is None else cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    enc = (encoding or "").lower()
-    if enc in ("rgb8", "bgr8"):
-        img = buf.reshape(height, width, 3)
-        return img.copy() if enc == "rgb8" else cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    if enc in ("yuyv", "yuv422_yuy2"):
-        return cv2.cvtColor(buf.reshape(height, width, 2), cv2.COLOR_YUV2RGB_YUY2)
-    if enc == "mono8":
-        return cv2.cvtColor(buf.reshape(height, width), cv2.COLOR_GRAY2RGB)
-    return None
+def robot_ip_from_args(default=hw.ROBOT_IP):
+    """--ip=192.168.1.2XX on the command line overrides hw_config.ROBOT_IP."""
+    for arg in sys.argv:
+        if arg.startswith("--ip="):
+            return arg.split("=", 1)[1]
+    return default
 
 
 # ---------------- the robot ----------------
 class RealRobot:
-    """Same methods as Environment, backed by the real robot over ROS 2."""
+    """Same methods as Environment, backed by the real robot through RosbridgeRobot."""
 
-    def __init__(self, wait_for_sensors=10.0):
-        import rclpy                                     # only needed on the real robot
-        from rclpy.node import Node
-        from rclpy.qos import qos_profile_sensor_data
-        from rclpy.executors import SingleThreadedExecutor
-        from sensor_msgs.msg import JointState, LaserScan, Image, CompressedImage
-        from geometry_msgs.msg import Twist, TwistStamped
+    def __init__(self, ip=None, wait_for_sensors=10.0):
+        from rosbridge_api import RosbridgeRobot      # pip install the UTS library (see top of file)
 
-        self._rclpy = rclpy
-        if not rclpy.ok():
-            rclpy.init()
-        self.node = Node("sandc_group88")
-        self._lock = threading.Lock()
-        self._wheels = self._scan = self._image = None
-        self._t_wheels = self._t_scan = self._t_image = 0.0
+        self.ip = ip or robot_ip_from_args()
+        print(f"connecting to the robot at {self.ip}:{hw.ROBOT_PORT} ...")
+        self.robot = RosbridgeRobot(self.ip, port=hw.ROBOT_PORT)
+        self.robot.setup()
         self._last_cmd = (0.0, 0.0)
 
-        # sensors: best-effort QoS so it works whatever the robot publishes with
-        self.node.create_subscription(JointState, hw.JOINT_STATES_TOPIC, self._on_joints, qos_profile_sensor_data)
-        self.node.create_subscription(LaserScan, hw.SCAN_TOPIC, self._on_scan, qos_profile_sensor_data)
-
-        # camera: use the first topic in the list that actually exists
-        self.camera_topic = None
-        known = dict(self._wait_for_topics(hw.CAMERA_TOPICS + [hw.CMD_VEL_TOPIC], 3.0))
-        for t in hw.CAMERA_TOPICS:
-            if t in known:
-                kind = CompressedImage if "Compressed" in known[t][0] else Image
-                self.node.create_subscription(kind, t, self._on_image, qos_profile_sensor_data)
-                self.camera_topic = t
-                break
-
-        # motors: newer TurtleBot3 builds use TwistStamped on /cmd_vel, older ones Twist
-        types = known.get(hw.CMD_VEL_TOPIC, ["geometry_msgs/msg/Twist"])
-        self._stamped = any("TwistStamped" in t for t in types)
-        self._Twist = TwistStamped if self._stamped else Twist
-        self._cmd_pub = self.node.create_publisher(self._Twist, hw.CMD_VEL_TOPIC, 10)
-
-        self._executor = SingleThreadedExecutor()
-        self._executor.add_node(self.node)
-        self._spin = threading.Thread(target=self._executor.spin, daemon=True)
-        self._spin.start()
+        # remember when each sensor last changed, so we can stop if one goes quiet
+        self._joints_seen, self._t_wheels = None, 0.0
+        self._scan_seq, self._t_scan = -1, 0.0
+        self._scan_cache = None
 
         # camera calibration from tools/calibrate_camera_real.py
         cal = ROOT / hw.CAMERA_CALIBRATION_FILE
@@ -131,52 +93,33 @@ class RealRobot:
         self._t0 = time.monotonic()
         self._next_tick = self._t0
         self._wait_for_sensors(wait_for_sensors)
-        print(f"RealRobot ready. camera: {self.camera_topic}  cmd_vel: {'TwistStamped' if self._stamped else 'Twist'}")
-
-    # ---------- ROS callbacks: just store the latest message ----------
-    def _on_joints(self, msg):
-        try:
-            l = msg.position[msg.name.index(hw.WHEEL_JOINTS[0])]
-            r = msg.position[msg.name.index(hw.WHEEL_JOINTS[1])]
-        except ValueError:
-            return
-        with self._lock:
-            self._wheels, self._t_wheels = (l, r), time.monotonic()
-
-    def _on_scan(self, msg):
-        out = scan_to_robot_frame(msg.angle_min, msg.angle_increment, msg.ranges, msg.range_min, msg.range_max,
-                                  hw.LIDAR_FORWARD)
-        with self._lock:
-            self._scan, self._t_scan = out, time.monotonic()
-
-    def _on_image(self, msg):
-        if hasattr(msg, "format"):
-            img = decode_image(msg.format, msg.data)
-        else:
-            img = decode_image(None, msg.data, msg.width, msg.height, msg.encoding)
-        if img is not None:
-            with self._lock:
-                self._image, self._t_image = img, time.monotonic()
-
-    def _wait_for_topics(self, wanted, timeout):
-        end = time.monotonic() + timeout
-        while time.monotonic() < end:
-            found = [(n, t) for n, t in self.node.get_topic_names_and_types() if n in wanted]
-            if len(found) == len(wanted):
-                return found
-            time.sleep(0.2)
-        return [(n, t) for n, t in self.node.get_topic_names_and_types() if n in wanted]
+        print("RealRobot ready")
 
     def _wait_for_sensors(self, timeout):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
-            with self._lock:
-                ready = self._wheels is not None and self._scan is not None and self._image is not None
-            if ready:
+            if (self._read_wheels() is not None and self.robot.query_laser_scan(timeout=0) is not None
+                    and self.robot.query_image(timeout=0) is not None):
                 return
             time.sleep(0.1)
-        missing = [n for n, v in (("wheels", self._wheels), ("lidar", self._scan), ("camera", self._image)) if v is None]
-        raise RuntimeError(f"No data from: {', '.join(missing)}. Is the robot bringup running, and the topics in hw_config.py right?")
+        missing = [n for n, ok in (("wheels", self._read_wheels() is not None),
+                                   ("lidar", self.robot.query_laser_scan(timeout=0) is not None),
+                                   ("camera", self.robot.query_image(timeout=0) is not None)) if not ok]
+        self.close()
+        raise RuntimeError(f"No data from: {', '.join(missing)}. Is the robot on, are you on its Wi-Fi, "
+                           f"and is the IP ({self.ip}) right?")
+
+    def _read_wheels(self):
+        msg = self.robot.query_joint_states()
+        if not msg:
+            return None
+        if msg is not self._joints_seen:                # a new message arrived
+            self._joints_seen, self._t_wheels = msg, time.monotonic()
+        try:
+            names, pos = list(msg["name"]), list(msg["position"])
+            return pos[names.index(hw.WHEEL_JOINTS[0])], pos[names.index(hw.WHEEL_JOINTS[1])]
+        except (KeyError, ValueError):
+            return None
 
     # ---------- simulation-style methods ----------
     def reset(self, *_ignored):
@@ -188,13 +131,17 @@ class RealRobot:
     def step(self):
         """Send the latest command, then wait until the next 0.02 s tick. Stops the robot if a sensor goes quiet."""
         now = time.monotonic()
-        with self._lock:
-            stale = [n for n, t in (("wheels", self._t_wheels), ("lidar", self._t_scan)) if now - t > hw.STALE_AFTER]
+        self._read_wheels()
+        seq = getattr(self.robot, "_laser_scan_sequence", None)
+        if seq is not None and seq != self._scan_seq:
+            self._scan_seq, self._t_scan = seq, now
+        stale = [n for n, t in (("wheels", self._t_wheels), ("lidar", self._t_scan if seq is not None else now))
+                 if now - t > hw.STALE_AFTER]
         if stale:
-            self._publish(0.0, 0.0)
+            self.robot.send_command(0.0, 0.0)
             print(f"WARNING: no recent {', '.join(stale)} data, robot stopped")
         else:
-            self._publish(*self._last_cmd)
+            self.robot.send_command(*self._last_cmd)
         self._next_tick += hw.CONTROL_DT
         time.sleep(max(0.0, self._next_tick - time.monotonic()))
         if time.monotonic() - self._next_tick > 0.2:      # fell well behind: don't try to catch up
@@ -206,41 +153,32 @@ class RealRobot:
 
     # ---------- actuation ----------
     def set_wheel_speeds(self, left, right):
-        """Wheel speeds in rad/s, same as the sim. Sent as forward speed + turn rate on /cmd_vel."""
+        """Wheel speeds in rad/s, same as the sim. Sent as forward speed + turn rate."""
         self._last_cmd = wheels_to_twist(left, right)
-        self._publish(*self._last_cmd)
-
-    def _publish(self, v, w):
-        msg = self._Twist()
-        t = msg.twist if self._stamped else msg
-        if self._stamped:
-            msg.header.stamp = self.node.get_clock().now().to_msg()
-        t.linear.x, t.angular.z = float(v), float(w)
-        self._cmd_pub.publish(msg)
+        self.robot.send_command(*self._last_cmd)
 
     def stop(self):
         self._last_cmd = (0.0, 0.0)
         for _ in range(5):                      # send a few times in case one is lost over Wi-Fi
-            self._publish(0.0, 0.0)
+            self.robot.stop()
             time.sleep(0.02)
 
     def close(self):
-        self.stop()
-        self._executor.shutdown()
-        self.node.destroy_node()
-        if self._rclpy.ok():
-            self._rclpy.shutdown()
+        try:
+            if self.robot.is_connected:
+                self.stop()
+        finally:
+            self.robot.cleanup()                # also sends a stop and disconnects
 
     # ---------- sensors ----------
     def get_wheel_angles(self):
         """Encoder readings (rad), left and right. Real encoders, so no added noise."""
-        with self._lock:
-            return self._wheels
+        return self._read_wheels()
 
     def get_camera_image(self):
-        """Latest camera frame, RGB (H, W, 3) uint8."""
-        with self._lock:
-            return self._image
+        """Latest camera frame, RGB (H, W, 3) uint8. The library gives BGR, perception wants RGB like the sim."""
+        bgr = self.robot.query_image(timeout=1.0)
+        return None if bgr is None else cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
     def get_camera_intrinsics(self):
         if self._K is None:
@@ -256,8 +194,12 @@ class RealRobot:
 
     def get_lidar(self):
         """(angles, ranges) like the sim: 360 beams, robot frame, no hit = inf."""
-        with self._lock:
-            return self._scan
+        scan = self.robot.query_laser_scan(timeout=1.0)
+        if scan is None:
+            return self._scan_cache
+        self._scan_cache = scan_to_robot_frame(scan.angle_min, scan.angle_increment, scan.ranges,
+                                               scan.range_min, scan.range_max, hw.LIDAR_FORWARD)
+        return self._scan_cache
 
     # ---------- things a real robot doesn't have ----------
     def get_ground_truth(self):

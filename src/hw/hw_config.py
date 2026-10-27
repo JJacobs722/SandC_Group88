@@ -1,17 +1,11 @@
 # Settings for the REAL TurtleBot3 Waffle Pi. Check every line marked CHECK at the lab.
 # The simulation settings stay in src/sim/config.py.
 
-# ---------- ROS 2 topics (CHECK with `ros2 topic list` on the lab machine) ----------
-CMD_VEL_TOPIC = "/cmd_vel"
-JOINT_STATES_TOPIC = "/joint_states"
-SCAN_TOPIC = "/scan"
-# tried in this order, the first one that exists is used. compressed is lighter over Wi-Fi
-CAMERA_TOPICS = ["/camera/image_raw/compressed", "/camera/image_raw", "/image_raw/compressed", "/image_raw"]
-WHEEL_JOINTS = ("wheel_left_joint", "wheel_right_joint")   # names in /joint_states (CHECK)
-
-# ---------- robot geometry used to turn wheel speeds into /cmd_vel ----------
-# the robot's own firmware turns /cmd_vel back into wheel speeds using its spec numbers,
-# so these must match the ones in src/control/lqr_tracker.py (it is imported from there)
+# ---------- connecting (UTS turtlebot_rosbridge) ----------
+# join the robot's Wi-Fi first (network and password are in the UTS-RI/turtlebot_rosbridge README)
+ROBOT_IP = "192.168.1.213"   # CHECK: 192.168.1.2XX where XX is your TurtleBot's number. Or: run_dock.py --real --ip=...
+ROBOT_PORT = 9090            # rosbridge default
+WHEEL_JOINTS = ("wheel_left_joint", "wheel_right_joint")   # names in /joint_states (CHECK with tools/hw_check.py)
 
 # ---------- limits (real Waffle Pi spec) ----------
 MAX_LINEAR = 0.26        # m/s
@@ -20,7 +14,7 @@ SAFETY_SCALE = 0.6       # extra safety for first runs: all commands are scaled 
 
 # ---------- timing ----------
 CONTROL_DT = 0.02        # s, same tick as the sim
-STALE_AFTER = 0.5        # s: if a sensor hasn't updated for this long, stop the robot
+STALE_AFTER = 0.6        # s: if wheels or LiDAR haven't updated for this long, stop the robot (LDS-01 spins at 5 Hz)
 
 # ---------- camera (CHECK: measure on the robot and run tools/calibrate_camera_real.py) ----------
 CAMERA_CALIBRATION_FILE = "camera_calibration_real.npz"   # made by tools/calibrate_camera_real.py

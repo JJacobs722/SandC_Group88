@@ -56,4 +56,4 @@ print(f"\nreprojection error (rms): {rms:.3f} pixels  (under 0.5 is good for a r
 print("K =\n", K)
 print("distortion (k1, k2, p1, p2, k3) =", dist.ravel())
 np.savez(OUT_FILE, K=K, dist=dist, rms=rms, size=np.array(size))
-print(f"saved {OUT_FILE}. Compare with the sim K (f = 415.7) in your write-up.")
+print(f"saved {OUT_FILE}. Compare with the sim K (f = 415.7) on the project page.")

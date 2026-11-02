@@ -126,7 +126,7 @@ with mujoco.viewer.launch_passive(env.m, env.d) as viewer:
         if k % 25 == 0:
             print(f"t={env.time:5.1f} ph={phase} det={'Y' if det is not None else '-'} "
                   f"acc={ekf.last_update_accepted} "
-                  f"est=({x_hat[0]:.2f},{x_hat[1]:.2f}) TRUE=({gt[0]:.2f},{gt[1]:.2f}) "
+                  f"    est=({x_hat[0]:.2f},{x_hat[1]:.2f})    TRUE=({gt[0]:.2f},{gt[1]:.2f})    "
                   f"lidar_min={info['min_range']:.2f} v={v:.3f} w={w:.3f}")
         k += 1
 

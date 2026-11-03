@@ -7,7 +7,7 @@ A TurtleBot3 Waffle Pi starts somewhere in a room it has no map of, searches for
 |---|---|
 | **Team** | Helena Karedis · Joshua Jacobs · Sebastian Todd · Taara Kotibhaskar |
 | **Repository** | https://github.com/JJacobs722/SandC_Group88 |
-| **Demo video (5 min)** | https://youtu.be/PeEaPlO5Rk0 |
+| **Demo video** | https://youtu.be/PeEaPlO5Rk0 |
 
 ## 1. Install and run
 ```

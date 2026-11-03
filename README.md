@@ -1,112 +1,123 @@
-# SandC_Group88: TurtleBot3 Visual Docking (Track A)
+# Group 88: TurtleBot3 Visual Docking (Track A)
+41014 Sensors and Control for Mechatronic Systems, Integrated Project, Spring 2026
 
-41014 Sensors and Control, Integrated Project. A TurtleBot3 Waffle Pi in MuJoCo navigates
-a room with obstacles and docks at an ArUco-marked charging station, using an EKF on
-wheel odometry and camera measurements, and an LQR controller running on the estimated state.
+A TurtleBot3 Waffle Pi starts somewhere in a room it has no map of, searches for an ArUco-marked charging station, drives around obstacles with its LiDAR, and docks in front of the marker. An EKF fuses wheel-encoder odometry with the marker's range, bearing and facing from the camera. An LQR tracker drives the robot using only that estimate. Ground truth is never used for control. The same code also runs on the real robot.
 
-## Setup
+| | |
+|---|---|
+| **Team** | Helena Karedis · Joshua Jacobs · Sebastian Todd · Taara Kotibhaskar |
+| **Repository** | https://github.com/JJacobs722/SandC_Group88 |
+| **Demo video (5 min)** | [[LINK TO VIDEO]] |
 
+## 1. Install and run
 ```
 python -m venv .venv
 .venv\Scripts\activate          # Mac: source .venv/bin/activate
 pip install -r requirements.txt
 ```
-
-## Run
-
-```
-python main.py                    # demo
-python -m tools.test_sensors      # check camera and LiDAR
-python -m tools.calibrate_wheels  # measure wheel radius and track width
-```
-
-## Project structure
-
-```
-assets/robotis_tb3/   robot model, world.xml (room, obstacles, dock), ArUco marker
-src/sim/              environment: the only code that talks to MuJoCo
-src/perception/       marker detection
-src/estimation/       EKF
-src/control/          controller
-tools/                test and calibration scripts
-```
-
-## Environment interface (`src/sim/environment.py`)
-
-| Method | Returns | Units / frame |
-|---|---|---|
-| `reset(x, y, yaw)` | none | m, rad, world frame |
-| `step()` | none | advances 0.02 s (50 Hz) |
-| `set_wheel_speeds(left, right)` | none | rad/s, clipped to ±7.88 |
-| `get_wheel_angles()` | `(left, right)` | rad, cumulative, with noise |
-| `get_camera_image()` | RGB array (480, 640, 3) | uint8 |
-| `get_camera_intrinsics()` | 3×3 K matrix | pixels |
-| `get_lidar()` | `(angles, ranges)` | rad in robot frame, m; no hit = inf |
-| `get_dock_position()` | `(x, y)` | m, world frame (known map) |
-| `get_ground_truth()` | `(x, y, yaw)` | **evaluation only, never used by the estimator or controller** |
-
-## Frames
-
-- **World:** origin at the room centre, x towards the dock, z up. Yaw is measured anticlockwise from +x.
-- **Robot:** x forward, y left. LiDAR angle 0 is straight ahead; positive angles are to the left.
-- **Camera:** looks along the robot's x-axis, mounted 0.07 m forward and 0.12 m up.
-
-## Robot parameters
-
-| Parameter | Value | Source |
-|---|---|---|
-| Wheel radius (effective) | **0.0281 m** | calibrated, `tools/calibrate_wheels.py` |
-| Track width (effective) | **0.351 m** | calibrated |
-| Wheel radius (geometric) | 0.033 m | model mesh |
-| Track width (geometric) | 0.288 m | model wheel positions |
-| Max wheel speed | ±7.88 rad/s | model actuator range |
-| Physics timestep | 0.002 s | model |
-| Control rate | 50 Hz | `config.py` |
-
-Use the **effective** values for odometry. The robot travels about 15% less than its geometric wheel
-size predicts (tyre slip and soft contact), and turns less than its geometric track width predicts
-(tyre scrub when turning).
-
-**Motor gain:** the wheel actuators' `kv` was raised to 1 in `turtlebot3_waffle_pi.xml`. With the original
-gain, the wheels only reached about 60% of the commanded speed. The real TurtleBot3's Dynamixel motors
-have built-in velocity control that tracks accurately, so the higher gain matches the real robot.
-At kv = 1, the wheels reach about 96% of a 5 rad/s command within 5 s from a standstill.
-
-## Sensors
-
-| Sensor | Setting |
+| Command | What it does |
 |---|---|
-| Camera | 640×480, vertical FOV 60°, K: f = 415.7, cx = 320, cy = 240 |
-| LiDAR | 360 beams (1°), max range 3.5 m, noise σ = 0.01 m |
-| Wheel encoders | noise σ = 0.002 rad |
-| ArUco marker | `DICT_4X4_50`, ID 0, 0.20 m black square, centre at (2.44, 0, 0.15) |
+| `python run_dock.py` | Full simulation, with the estimate and its uncertainty ellipse drawn live |
+| `python run_dashboard.py` | Same run with a 4-panel view (top-down, camera, LiDAR, live numbers) |
+| `python evaluate.py` | 20 trials for each of 9 conditions, results saved in `results/` |
+| `python run_dock.py --real --ip=192.168.1.2XX` | Same pipeline on the real TurtleBot (setup in `HARDWARE.md`) |
 
-All settings live in `src/sim/config.py`.
+## 2. Code structure
+| Folder | What's in it | Lead |
+|---|---|---|
+| `src/sim/` | MuJoCo world, robot, sensors and noise | Joshua |
+| `src/perception/` | Marker detection and its noise model | Helena |
+| `src/estimation/` | EKF | Sebastian |
+| `src/control/` | LQR, LiDAR navigation, marker search | Taara |
+| `src/hw/` | Real-robot version of the environment | Joshua, Helena |
 
-**Marker note:** `aruco_0.png` is saved mirrored on purpose, because MuJoCo mirrors it again on the box face.
-Keep the `cv2.flip` line in `tools/make_marker.py` if you regenerate it.
+Ground truth only appears in the blocks marked `evaluation only` in `run_dock.py` and `evaluate.py`.
 
-## World
+## 3. Model
+- **State:** x = [x, y, θ], the middle of the wheel axle, in the marker frame.
+- **Process model:** differential drive from the encoder increments, Δs = r(Δφ_r + Δφ_l)/2 and Δθ = r(Δφ_r − Δφ_l)/b. Assumes a flat floor and no slip beyond the calibrated noise.
+- **Measurement:** z = [range, bearing, facing] of the marker, which sits at (0, 0) facing +x.
+- **Controllability:** the LQR tracking-error model has full rank (3) while the reference is moving and drops to rank 2 when it stops, so the tracker never lets the reference speed reach exactly zero.
+- **Observability:** wheels alone can't fix where the robot is, so drift grows. One marker sighting gives the full pose, which is how the EKF starts. When the marker is out of view, the uncertainty grows until the next sighting.
 
-5 m × 5 m room, walls 0.5 m tall. The robot starts at (0, 0) facing the dock. `obstacle_1` sits directly
-in the path, so the marker is hidden at the start and the robot must drive around it.
-Obstacle positions can be changed in `world.xml`.
+## 4. Sensing, calibration and frames
+**Frames**
+- **Camera frame:** x right, y down, z forward. 0.07 m in front of the wheel axle (0.073 m on the real robot).
+- **LiDAR frame:** 0.064 m behind the wheel axle (0.065 m on the real robot).
+- **Robot frame:** x forward, y left, centred on the wheel axle.
+- **Marker frame:** marker at (0, 0), face along +x. The EKF works in this frame.
+- **Start frame:** where the robot was switched on. Used with the wheels only, before the marker is seen.
 
-## Team contributions
 
-Josh - Simulated world
+| Calibration | Sim | Real robot |
+|---|---|---|
+| Camera focal length (checkerboard) | 415.1 px (true 415.7), error 0.11 px | 1311 px, error 0.14 px |
+| Wheel radius | 0.0281 m effective (spec 0.033) | 0.0327 m |
+| Wheel base | 0.351 m effective (spec 0.288) | [[0.287 spec / measured?]] |
 
-Helena - Perception
+Camera noise was measured from 200 readings at each distance. Range noise grows with distance² and bearing noise stays about constant. Facing noise gets large past 2 m, so the EKF only starts once the robot is within 1.8 m.
 
-Seb - Estimation
+## 5. Estimator
+| Parameter | Value | Why |
+|---|---|---|
+| Wheel noise k_wheel | 5e-3 | Most consistent in the sweep below |
+| Turning slip k_turn | 5e-4 | Measured: the Waffle shuffles when it spins |
+| Camera noise R | from the measured noise model | Bigger further away |
+| Outlier gate | χ² 99% (11.34) | Rejects bad detections |
+| Restart | after 5 rejects in a row | Recovers if the estimate drifts too far |
 
-Taara - Control
+## 6. Controller
+| Parameter | Value | Why |
+|---|---|---|
+| LQR Q | diag(20, 20, 5) | Position matters most for docking |
+| LQR R | diag(1, 2) | Turning penalised more, to limit slip |
+| Obstacle avoidance | 41 headings, 0.22 m safety radius | Picks open directions from the LiDAR |
+| Docking | 0.60 m stand-off, stop at 0.25 m | Lines up square before the final approach |
+| Speed | 0.15 m/s, 0.08 m/s on the final approach | Slower when close, for accuracy |
 
-## Generative AI declaration
+## 7. Results
+**Simulation:** 20 trials per condition, random obstacle layouts.
 
-Claude (Anthropic) was used to help set up the simulation environment and write README.md
+| Condition | Docked | NEES (ideal 3) |
+|---|---|---|
+| Nominal | 16/20 | 2.57 |
+| Camera noise ×4 | 16/20 | 7.71 |
+| LiDAR noise ×5 | 13/20 | 3.42 |
+| Encoder noise ×10 | 16/20 | 5.20 |
+| Bad start guess ×6 | 16/20 | 12.53 |
+| Bad start guess ×6, wider start uncertainty | 17/20 | 4.12 |
 
-## Acknowledgements
+- Nominal docks finished **4.7 cm** from the target on average (worst 5.1 cm), with no collisions.
+- **Trade-off:** k_wheel 1e-3 gave NEES 6.47 (overconfident) and 2e-2 gave 1.44 (underconfident). 5e-3 was the best balance.
 
-- TurtleBot3 model: [ROBOTIS robotis_mujoco_menagerie](https://github.com/ROBOTIS-GIT/robotis_mujoco_menagerie), Apache 2.0
-- MuJoCo, OpenCV
+**Real robot:** 12 runs with a 15 cm marker.
+
+| | |
+|---|---|
+| Docked | 11/12 (the 1 failure never found the marker) |
+| Had to search first | 7 of 12 runs |
+| Time to dock | 15–84 s |
+
+
+The real camera and wheels both needed re-calibrating. The estimate's heading uncertainty also grew near the end of the real runs, because the marker leaves the camera's view in the last 25 cm.
+
+## 8. Limitations
+- The search can miss the marker (1 real run).
+- The final approach is blind once the marker is too close to see.
+
+
+## 9. Individual contributions
+| Member | Contribution |
+|---|---|
+| Joshua Jacobs | Simulated world (robot, room, sensors, noise), wheel and camera calibration, real-robot interface, real TurtleBot testing |
+| Helena Karedis | Perception (marker detection, noise model), real-robot interface, real TurtleBot testing  |
+| Sebastian Todd | Estimation (EKF design and tuning)  |
+| Taara Kotibhaskar | Control (LQR, LiDAR navigation, docking), demo video  |
+
+## 10. Generative AI declaration
+| Tool | Used for |
+|---|---|
+| Claude (Anthropic) | Debuggin, integration, evaluation scripts, real-robot interface and documentation. |
+
+## 11. Acknowledgements
+TurtleBot3 model: ROBOTIS mujoco menagerie (Apache 2.0) · Real-robot interface: UTS-RI/turtlebot_rosbridge · EKF structure adapted from the 41014 tutorial / Assessment 2 code

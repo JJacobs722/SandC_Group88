@@ -7,7 +7,7 @@ A TurtleBot3 Waffle Pi starts somewhere in a room it has no map of, searches for
 |---|---|
 | **Team** | Helena Karedis · Joshua Jacobs · Sebastian Todd · Taara Kotibhaskar |
 | **Repository** | https://github.com/JJacobs722/SandC_Group88 |
-| **Demo video (5 min)** | [[LINK TO VIDEO]] |
+| **Demo video (5 min)** | https://youtu.be/PeEaPlO5Rk0 |
 
 ## 1. Install and run
 ```
@@ -117,7 +117,7 @@ The real camera and wheels both needed re-calibrating. The estimate's heading un
 ## 10. Generative AI declaration
 | Tool | Used for |
 |---|---|
-| Claude (Anthropic) | Debuggin, integration, evaluation scripts, real-robot interface and documentation. |
+| Claude (Anthropic) | Debugging, integration, evaluation scripts, real-robot interface and documentation. |
 
 ## 11. Acknowledgements
 TurtleBot3 model: ROBOTIS mujoco menagerie (Apache 2.0) · Real-robot interface: UTS-RI/turtlebot_rosbridge · EKF structure adapted from the 41014 tutorial / Assessment 2 code

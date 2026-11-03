@@ -22,7 +22,7 @@ EKF, EKF_build, angle_wrap = ekf_module.EKF, ekf_module.EKF_build, ekf_module.an
 
 from src.sim.environment import Environment
 from src.sim import config                      # used by marker.py
-import sim.config as env_config                 # used by environment.py (a DIFFERENT module object)
+import sim.config as env_config
 from src.perception.marker import detect_marker, measurement_covariance
 from src.control.lqr_tracker import control, to_wheels
 from src.control.lidar_nav import LidarNavigator
@@ -30,7 +30,7 @@ from src.control.lidar_nav import LidarNavigator
 # ---------------- experiment settings ----------------
 N_TRIALS = 20           # per condition; use 3 for a quick check
 T_MAX = 120.0           # s; a trial not docked by then is a timeout
-SUCCESS_DIST = 0.10     # m: TRUE distance to the stop point that counts as docked
+SUCCESS_DIST = 0.10     # m, true distance that counts as docked
 STANDOFF, STOP_DIST = 0.60, 0.25
 Q = np.diag([20.0, 20.0, 5.0])
 Rw = np.diag([1.0, 2.0])
@@ -48,7 +48,7 @@ CONDITIONS = [
     dict(name="lidar_x5",      lidar_noise=0.05),
     # --- stress: odometry ---
     dict(name="enc_x10",       enc_noise=0.02),
-    # --- stress: bad initial guess (gate lockout test) and a fix for it ---
+    # --- bad initial guess ---
     dict(name="init_x6",       init_scale=6.0),
     dict(name="init_x6_P0x6",  init_scale=6.0, p0_scale=6.0),
 ]
@@ -60,9 +60,9 @@ dt = config.CONTROL_DT
 cam_every, lidar_every = round(0.2 / dt), round(0.1 / dt)
 
 
-# ---------------- harness helpers (EVALUATION ONLY) ----------------
+# ---------------- evaluation only helpers ----------------
 def sample_layout(env, rng, start_xy, dock):
-    """Random obstacle positions. Edits the obstacle geoms in the model; the controller never sees this."""
+    # random obstacle positions
     m = env.m
     ids = [m.geom(n).id for n in ("obstacle_1", "obstacle_2", "obstacle_3")]
     rad = [np.hypot(*m.geom_size[g][:2]) if m.geom_type[g] == 6 else m.geom_size[g][0] for g in ids]
@@ -97,11 +97,10 @@ def collided(env):
 def run_trial(env, cond, trial):
     rng = np.random.default_rng(trial)                        # same layout/start for every condition
     start = np.array([rng.uniform(0.0, 0.3), rng.uniform(-0.3, 0.3), rng.uniform(-0.35, 0.35)])
-    dock = env.get_dock_position()                            # known landmark (stated assumption)
+    dock = env.get_dock_position()
     for g, p in sample_layout(env, rng, start[:2], dock).items():
         env.m.geom_pos[g][:2] = p
 
-    # noise settings: environment.py reads env_config, marker.py reads config
     config.CAMERA_PIXEL_NOISE = cond["pixel_noise"]
     env_config.ENCODER_NOISE = cond["enc_noise"]
     env_config.LIDAR_NOISE = cond["lidar_noise"]
@@ -147,13 +146,13 @@ def run_trial(env, cond, trial):
 
         ref, v_cap, info = nav.plan(x_hat, goal, angles, ranges, dock,
                                     v_max=0.15 if phase == 0 else 0.08)
-        v, w = control(x_hat, ref, Q, Rw, dt)                 # LQR on the ESTIMATED state
+        v, w = control(x_hat, ref, Q, Rw, dt)                 # LQR on the estimate
         v = float(np.clip(v, 0.0, v_cap))
         wl, wr = to_wheels(v, w)
         env.set_wheel_speeds(wl, wr)
         env.step()
 
-        # ---- EVALUATION ONLY: nothing here feeds back into the controller ----
+        # ---- evaluation only, not fed back into control ----
         gt = env.get_ground_truth()
         e = gt - x_hat
         e[2] = angle_wrap(e[2])

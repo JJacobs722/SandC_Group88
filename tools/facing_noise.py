@@ -1,11 +1,5 @@
-"""How accurate is the marker's facing direction at different distances?
-
-Parks the robot at 7 distances (0.5 to 3.5 m) and 9 spots each, facing the marker,
-and compares detect_marker_pose with the true answer. Run once with pixel noise off
-and once with it on. These numbers set FACING_NOISE_K in marker.py.
-
-Ground truth is used here to grade the measurement only, never by the robot.
-Run from the top folder:  python -m tools.facing_noise
+"""Facing accuracy at 0.5 to 3.5 m, sets FACING_NOISE_K in marker.py. Ground truth only grades it.
+  python -m tools.facing_noise
 """
 import math
 

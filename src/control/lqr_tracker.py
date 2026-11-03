@@ -32,8 +32,7 @@ def lqr_gain(v_r, w_r, dt, Q, R):
     return np.linalg.solve(R + Bd.T @ P @ Bd, Bd.T @ P @ Ad)
 
 def control(x_hat, ref, Q, R, dt, v_max=V_MAX, w_max=W_MAX):
-    """x_hat: ESTIMATED [x, y, theta]. ref: [xr, yr, thr, vr, wr].
-    Returns (v, w) in m/s and rad/s."""
+    # x_hat = estimate [x, y, th], returns v, w
     x, y, th = x_hat
     xr, yr, thr, vr, wr = ref
 

@@ -1,11 +1,5 @@
-"""FIRST thing to run at the lab: is the real robot talking to us?
-
-  python -m tools.hw_check          sensors only, the robot does NOT move
-  python -m tools.hw_check --move   also drives about 10 cm forward then turns about 45 deg, slowly
-  add --ip=192.168.1.2XX to either if your robot isn't the one in hw_config.py
-
-Saves hw_camera.png (what the camera sees) and hw_lidar.png (the scan from above).
-Keep a hand near the robot's power switch for the --move test.
+"""Check the real robot's sensors, and motors with --move (~6 cm forward, ~30 deg turn).
+  python -m tools.hw_check [--move] [--ip=192.168.1.2XX]
 """
 import math
 import sys

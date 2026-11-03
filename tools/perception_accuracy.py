@@ -1,4 +1,4 @@
-"""Task 2: how accurate is perception at different distances and angles?
+"""How accurate is perception at different distances and angles?
 
 Runs with camera noise OFF, so only the method's own errors show.
 Compares corner refinement off vs on.

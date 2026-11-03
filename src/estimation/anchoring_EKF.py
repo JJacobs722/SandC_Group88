@@ -14,7 +14,7 @@
 #NO GROUND TRUTH EVER
 
 #imports taken from assessment 2 file!
-from __future__ import annotations  # so 'float | None' works on older python
+from __future__ import annotations  #needed for macs
 import numpy as np
 from dataclasses import dataclass, field
 
@@ -31,7 +31,7 @@ class EKF_build:
     #processing dat noise fr fr
     k_wheel: float = 1e-3 #in m, variance per m travelled per wheel
     min_wheel_var: float = 1e-9 #keeps Q non-zero when stationary
-    k_turn: float = 0.0 #m^2 per rad turned: the waffle shuffles sideways when it turns, the wheels can't see this
+    k_turn: float = 0.0 #m^2 per rad turned, turning slip
     q_floor: np.ndarray = field(default_factory = lambda: np.diag([1e-8, 1e-8, 1e-8]))
     #measurement noise
     R_range_bearing: np.ndarray = field(default_factory = lambda: np.diag([0.05**2, np.deg2rad(3)**2]))
@@ -60,7 +60,7 @@ class EKF:
         self.x[2] = angle_wrap(self.x[2])
         self.P = np.array(P0 if P0 is not None else self.cfg.P0, dtype = float)
 
-        #diagnostics shit for reporting if needed
+        #diagnostics for reporting if needed
         self.last_nis = None
         self.last_innovation = None
         self.last_update_accepted = None
@@ -91,8 +91,7 @@ class EKF:
                       [-1 / L, 1 / L]])
         Sigma_u = np.diag([c.k_wheel * abs(ds_l) + c.min_wheel_var, c.k_wheel * abs(ds_r) + c.min_wheel_var])
         self.P = F @ self.P @ F.T + G @ Sigma_u @ G.T + c.q_floor
-        #turning slip: the body sits behind the wheels and drags, so turning moves the robot a bit
-        #in a direction the wheel model doesn't predict. grow the position uncertainty with |turn|
+        #turning slip: add position noise when turning
         self.P[:2, :2] += c.k_turn * abs(dth) * np.eye(2)
         self.P = 0.5*(self.P + self.P.T)
 
@@ -121,8 +120,7 @@ class EKF:
 
     def update_marker(self, z, R):
         #z = [range, bearing, facing] of the marker seen from the robot
-        #the world frame IS the marker frame: marker at (0,0), its face pointing along +x
-        #so no map is needed, the marker defines where (0,0) is
+        #marker frame: marker at (0,0) facing +x
         x, y, th = self.x
         q = x*x + y*y
         rho = np.sqrt(q)
@@ -202,8 +200,7 @@ def pose_from_marker(z):
 
 
 def start_from_marker(z, R, cfg=None):
-    #start the EKF from the first good sighting, no guess of the start needed
-    #P0 comes from pushing the measurement noise R through pose_from_marker (numerical jacobian)
+    #start the EKF from one sighting, P0 from R via a numerical jacobian
     z = np.asarray(z, float)
     x0 = pose_from_marker(z)
     J = np.zeros((3, 3))
@@ -219,7 +216,6 @@ def start_from_marker(z, R, cfg=None):
 
 #cheeky self-test to see if anything dies, good for testing before merging to main
 if __name__ == "__main__":
-    # Pure-numpy sanity check: no MuJoCo needed. Run:  python ekf.py
     rng = np.random.default_rng(0)
     cfg = EKF_build()
     r, L, dt = cfg.wheel_radius, cfg.wheel_base, 0.02

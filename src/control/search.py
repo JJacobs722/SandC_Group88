@@ -1,14 +1,4 @@
-"""Finding the marker when the robot knows nothing about the room.
-
-Works in the robot's START frame: wherever the robot was switched on is (0, 0), facing along x.
-That isn't knowledge of the room, it's just a name for "where I started". The pose comes from
-wheel odometry only, because nothing else is available yet.
-
-Modes:
-  spin      turn on the spot one full circle, looking for the marker
-  explore   drive up to 1 m towards open space (from the LiDAR), then spin again
-  approach  marker seen but too far away to trust which way it faces: drive towards it
-"""
+"""Marker search: spin, explore towards open space, or approach a far marker. Odometry only, start frame."""
 import numpy as np
 
 
@@ -32,7 +22,6 @@ class MarkerSearch:
         self.marker_xy = None                 # marker position in the start frame, once seen
 
     def saw_marker(self, pose, det):
-        """Marker seen but too far away. Remember where it is (start frame) and head towards it."""
         x, y, th = pose
         r, b = det[0], det[1]
         self.marker_xy = np.array([x + r * np.cos(th + b), y + r * np.sin(th + b)])
@@ -40,7 +29,6 @@ class MarkerSearch:
             self.mode, self.timer = "approach", 0.0
 
     def update(self, pose, angles, ranges, dt):
-        """Returns ("spin", None) to turn on the spot, or ("goto", target_xy) in the start frame."""
         self.timer += dt
 
         if self.mode == "approach":
@@ -74,7 +62,6 @@ class MarkerSearch:
         self.mode, self.turned, self.prev_th, self.timer = "spin", 0.0, None, 0.0
 
     def _pick_target(self, pose, angles, ranges):
-        """Pick a point up to 1 m away: lots of free space, and far from places we've already been."""
         if angles is None:
             return None
         x, y, th = pose

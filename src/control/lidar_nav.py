@@ -6,11 +6,7 @@ def _wrap(a):
 
 
 class LidarNavigator:
-    """Reactive gap-follower. Picks a safe heading toward the goal from LiDAR only, and returns a
-    local reference [xr, yr, thr, vr, wr] for the LQR tracker plus a speed cap.
-
-    Uses: x_hat (EKF estimate), the goal, and the LiDAR scan. No obstacle map, no ground truth.
-    """
+    """Gap follower: picks a safe heading from the LiDAR, returns a reference for the LQR."""
 
     def __init__(self, r_safe=0.22, d_look=1.2, lookahead=0.30, span_deg=100, n_cand=41,
                  w_clear=1.5, w_switch=0.3, dock_mask=0.45, d_stop=0.45):
@@ -20,7 +16,6 @@ class LidarNavigator:
         self.w_clear, self.w_switch = w_clear, w_switch
         self.dock_mask = dock_mask        # ignore LiDAR points this close to the dock (m)
         self.d_stop = d_stop              # headings with less free space than this are never chosen
-                                          # (must exceed the 0.30 m where the speed governor hits zero)
         self.phis = np.deg2rad(np.linspace(-span_deg, span_deg, n_cand))   # candidates, robot frame
         self.prev_phi = 0.0
 
@@ -35,7 +30,7 @@ class LidarNavigator:
         a, r = angles[ok], ranges[ok]
         px, py = r * np.cos(a), r * np.sin(a)
 
-        # the dock itself is not an obstacle: drop hits near the (known) dock position
+        # don't treat the dock as an obstacle
         if dock is not None and px.size:
             wx = x + np.cos(th) * px - np.sin(th) * py
             wy = y + np.sin(th) * px + np.cos(th) * py
@@ -54,12 +49,11 @@ class LidarNavigator:
             free = np.full(self.phis.shape, d_eff)
             min_range = float("inf")
 
-        # prefer headings near the goal direction, with lots of free space, and no dithering
+        # score headings: towards goal, open, not switching
         cost = (np.abs(_wrap(self.phis - goal_phi))
                 + self.w_clear * (1.0 - free / d_eff)
                 + self.w_switch * np.abs(self.phis - self.prev_phi))
 
-        # only headings the speed governor will let the robot drive along are eligible
         feasible = free >= min(self.d_stop, d_eff)
         if feasible.any():
             i = int(np.argmin(np.where(feasible, cost, np.inf)))
@@ -70,7 +64,7 @@ class LidarNavigator:
         phi = float(self.phis[i])
         self.prev_phi = phi
 
-        # speed governor: slow near obstacles, near the goal, and when not facing the chosen heading
+        # slow down near obstacles and the goal
         clear = 1.0 if free[i] >= d_eff else float(np.clip((free[i] - 0.30) / 0.50, 0.0, 1.0))
         v_cap = min(v_max, 0.8 * dist) * clear * max(0.0, np.cos(phi))
         if stuck:

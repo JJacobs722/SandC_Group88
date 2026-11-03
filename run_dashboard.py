@@ -1,13 +1,4 @@
-"""Same pipeline as run_dock.py, shown as a 4 panel dashboard:
-top-down view, robot camera, LiDAR scan and live numbers.
-
-  python run_dashboard.py                      # show the window
-  python run_dashboard.py --record             # also save results/dashboard.mp4
-  python run_dashboard.py --headless --record  # no window, just save the video
-
-Works with plain python on Windows and Mac (no mjpython needed).
-Press q in the window to stop early.
-"""
+"""run_dock.py with a 4 panel dashboard. --record saves results/dashboard.mp4, --headless for no window."""
 import sys
 import time
 import math
@@ -44,7 +35,7 @@ SHOW = "--headless" not in sys.argv
 RECORD = "--record" in sys.argv
 T_MAX = 180.0
 
-# where WE put the robot in the room. The robot is NOT told this. Change it to try anywhere.
+# start pose, the robot isn't told this
 PLACE = (0.0, 0.0, 0.0)
 DRAW_EVERY = 5            # redraw the dashboard every 5 ticks (10 times a second)
 PW, PH = 480, 360         # size of each panel in pixels
@@ -55,17 +46,15 @@ env.reset(*PLACE)
 
 K_cam = env.get_camera_intrinsics()
 dt = config.CONTROL_DT
-# calibrated wheel numbers (tools/calibrate_wheels.py), k_wheel tuned in evaluate.py
-# k_turn: the waffle shuffles about 6 cm when it spins on the spot (tools/turn_slip.py)
+# calibrated in tools/calibrate_wheels.py and tools/turn_slip.py
 cfg = EKF_build(wheel_radius=0.0281, wheel_base=0.351, k_wheel=5e-3, k_turn=5e-4)
 
-# before the marker is seen the robot only has its wheels, in its own start frame
-odom = EKF([0.0, 0.0, 0.0], cfg)          # start frame: "wherever I started is (0, 0)"
+# before seeing the marker: wheels only, start frame
+odom = EKF([0.0, 0.0, 0.0], cfg)
 odom.step(*env.get_wheel_angles())
 search = MarkerSearch()
 
-# once the marker is seen up close, the EKF starts in the MARKER frame:
-# marker at (0, 0), its face pointing along +x. No map needed, the marker defines it.
+# EKF runs in the marker frame, marker at (0,0) facing +x
 ekf = None
 START_RANGE = 1.8
 RELOCK_AFTER = 5
@@ -118,7 +107,7 @@ def draw_overview(x_hat, P, goal):
         img = cv2.cvtColor(overview.render(), cv2.COLOR_RGB2BGR)
         title(img, "Top-down view (searching, no estimate yet)")
         return img
-    # the EKF works in the marker frame, so turn it into room coordinates just to draw it
+    # marker frame -> room coordinates, display only
     xy = env.marker_to_world(x_hat[:2])
     gxy = env.marker_to_world(goal)
     psi = env.marker_frame_in_world()[1]

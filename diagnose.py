@@ -1,6 +1,6 @@
 import csv
 import numpy as np
-import evaluate as ev          # reuses its setup; evaluate's main block doesn't run on import
+import evaluate as ev          # uses evaluate.py's setup
 
 COND = "kw5e-3"                # which condition to replay
 MAX_TRIALS = 2                 # how many failing trials to replay
@@ -38,7 +38,7 @@ def trace(trial):
     standoff_pt, stop_pt = dock + ev.STANDOFF * u, dock + ev.STOP_DIST * u
     nav = ev.LidarNavigator()
 
-    # ---- harness-only: how much room is there around the stand-off point? ----
+    # ---- room around the stand-off point ----
     print(f"start=({start[0]:.2f},{start[1]:.2f}) stand-off point=({standoff_pt[0]:.2f},{standoff_pt[1]:.2f})")
     for g, p in layout.items():
         sz = env.m.geom_size[g]

@@ -1,12 +1,5 @@
-"""Calibrate the REAL robot camera with a printed checkerboard, the same method as tools/calibrate_camera.py.
-
-1. Print assets/robotis_tb3/checkerboard.png flat (don't scale to fit if you can help it).
-2. Measure one square with a ruler and put it in SQUARE_SIZE below.
-3. Run:  python -m tools.calibrate_camera_real
-4. Hold the board in front of the robot camera at different distances and tilts.
-   When the corners show up coloured, press SPACE to keep that photo. Get 20 or more.
-5. Press C to calibrate. Saves camera_calibration_real.npz, which RealRobot loads.
-   Q quits without saving. The robot does not move.
+"""Calibrate the real camera with a checkerboard (printed or on a screen). Saves camera_calibration_real.npz.
+  python -m tools.calibrate_camera_real   (SPACE keep photo, C calibrate, Q quit)
 """
 import cv2
 import numpy as np
@@ -14,7 +7,7 @@ import numpy as np
 from src.hw.real_robot import RealRobot
 
 INNER_CORNERS = (9, 6)    # corners where 4 squares meet (the board is 10 x 7 squares)
-SQUARE_SIZE = 0.025       # m: MEASURE your printed square and change this
+SQUARE_SIZE = 0.018       # m: MEASURE your printed square and change this
 OUT_FILE = "camera_calibration_real.npz"
 
 board = np.zeros((INNER_CORNERS[0] * INNER_CORNERS[1], 3), np.float32)

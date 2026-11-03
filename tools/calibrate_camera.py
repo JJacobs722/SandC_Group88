@@ -1,12 +1,4 @@
-"""Task 5: calibrate the robot's camera with a checkerboard, like you would a real camera.
-
-Uses its own small world (calibration_world.xml) with a floating checkerboard.
-Moves the board to 30 random positions in front of the camera, photographs it,
-then lets OpenCV work out the K matrix from the photos.
-
-This tool loads MuJoCo directly because it needs to move the board.
-That's fine for a calibration tool. The real pipeline still only uses Environment.
-"""
+"""Sim camera calibration with a checkerboard."""
 from pathlib import Path
 
 import cv2

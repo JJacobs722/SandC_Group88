@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-REAL = "--real" in sys.argv               # python run_dock.py --real  -> real TurtleBot instead of the sim
+REAL = "--real" in sys.argv               # --real runs it on the real turtlebot
 if not REAL:
     import mujoco
     import mujoco.viewer
@@ -34,14 +34,14 @@ from src.control.lqr_tracker import control, to_wheels
 from src.control.lidar_nav import LidarNavigator
 from src.control.search import MarkerSearch
 
-REALTIME = not REAL      # False = run as fast as possible (the real robot keeps its own time in step())
+REALTIME = not REAL      # False = as fast as possible
 T_MAX = 180.0
 
-# where WE put the robot in the room. The robot is NOT told this. Change it to try anywhere.
+# start pose, the robot isn't told this
 PLACE = (0.0, 0.0, 0.0)
 
 # ---------------- setup ----------------
-# the ONLY difference between sim and real robot: which class env is. Everything below is the same.
+# sim or real robot, everything after this is the same
 if REAL:
     from src.hw.real_robot import RealRobot
     from src.hw import hw_config as hw
@@ -56,23 +56,21 @@ set_camera_setup(*env.get_camera_mount(), env.get_camera_distortion(),
                  marker_size=hw.MARKER_SIZE if REAL else None)
 dt = config.CONTROL_DT
 if REAL:
-    # real robot numbers: spec values until tools/calibrate_wheels_real.py is run
+    # real robot wheel numbers (hw_config.py)
     cfg = EKF_build(wheel_radius=hw.WHEEL_RADIUS, wheel_base=hw.WHEEL_BASE, k_wheel=hw.K_WHEEL, k_turn=hw.K_TURN)
 else:
-    # calibrated wheel numbers (tools/calibrate_wheels.py), k_wheel tuned in evaluate.py
-    # k_turn: the waffle shuffles about 6 cm when it spins on the spot (tools/turn_slip.py)
+    # calibrated in tools/calibrate_wheels.py and tools/turn_slip.py
     cfg = EKF_build(wheel_radius=0.0281, wheel_base=0.351, k_wheel=5e-3, k_turn=5e-4)
 
-# before the marker is seen the robot only has its wheels, in its own start frame
-odom = EKF([0.0, 0.0, 0.0], cfg)          # start frame: "wherever I started is (0, 0)"
+# before seeing the marker: wheels only, start frame
+odom = EKF([0.0, 0.0, 0.0], cfg)
 odom.step(*env.get_wheel_angles())
 search = MarkerSearch()
 
-# once the marker is seen up close, the EKF starts in the MARKER frame:
-# marker at (0, 0), its face pointing along +x. No map needed, the marker defines it.
+# EKF runs in the marker frame, marker at (0,0) facing +x
 ekf = None
-START_RANGE = 1.8                        # m: only start the EKF this close (marker facing is noisy further away)
-RELOCK_AFTER = 5                         # camera rejected this many times in a row -> restart the EKF from the camera
+START_RANGE = 1.8                        # m, facing gets noisy further than this
+RELOCK_AFTER = 5                         # restart EKF after this many rejects in a row
 MARKER_XY = np.array([0.0, 0.0])
 standoff_pt = np.array([0.60, 0.0])      # 0.60 m straight out from the marker
 stop_pt = np.array([0.25, 0.0])          # 0.25 m straight out from the marker
@@ -86,8 +84,7 @@ lidar_every = round(0.1 / dt)            # LiDAR 10 Hz
 
 
 def draw_estimate(viewer, x_hat, P):
-    # green dot = EKF estimate, green ellipse = uncertainty (display only)
-    # the EKF works in the marker frame, so turn it into room coordinates just to draw it
+    # draw estimate + 2 sigma ellipse (display only)
     scn = viewer.user_scn
     xy = env.marker_to_world(x_hat[:2])
     psi = env.marker_frame_in_world()[1]
@@ -114,7 +111,7 @@ k, log = 0, []
 rejects = 0
 docked = False
 found_at = None
-run_log = []                             # real robot: everything the robot itself knew, saved to a CSV
+run_log = []                             # real robot log
 
 
 class NoViewer:
@@ -167,7 +164,7 @@ try:
             if det is not None:
                 rejects = 0 if ekf.last_update_accepted else rejects + 1
                 if rejects >= RELOCK_AFTER and det[0] < START_RANGE:
-                    # the wheels have drifted so far the gate keeps saying no: trust the camera again
+                    # gate keeps rejecting, restart from the camera
                     ekf = start_from_marker(det, R_meas, cfg)
                     ekf.step(wheel_l, wheel_r)
                     x_hat, P = ekf.state, ekf.covariance
@@ -176,7 +173,7 @@ try:
 
         # ---- control ----
         if ekf is None:
-            # searching: no idea where the marker is yet
+            # searching
             mode, target = search.update(odom_pose, angles, ranges, dt)
             if mode == "spin":
                 v, w = 0.0, search.spin_rate
@@ -185,7 +182,7 @@ try:
                 v, w = control(odom_pose, ref, Q, Rw, dt)
                 v = float(np.clip(v, 0.0, v_cap))
         else:
-            # docking: only uses the estimate, in the marker frame
+            # docking, estimate only
             if phase == 0 and np.hypot(*(goal - x_hat[:2])) < 0.10:
                 phase, goal = 1, stop_pt
             if phase == 1 and np.hypot(*(stop_pt - x_hat[:2])) < 0.04:
@@ -257,4 +254,4 @@ try:
         time.sleep(0.05)
 finally:
     if REAL:
-        env.close()                      # always stop the motors, even after Ctrl+C or an error
+        env.close()                      # stop motors on exit

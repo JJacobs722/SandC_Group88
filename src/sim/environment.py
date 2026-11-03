@@ -94,12 +94,10 @@ class Environment:
                          [0, 0, 1]])
 
     def get_camera_mount(self):
-        """(forward, left) of the camera from the robot's centre, in metres. Read from the robot file."""
         p = self.m.cam_pos[self.m.camera(config.CAMERA_NAME).id]
         return float(p[0]), float(p[1])
 
     def get_camera_distortion(self):
-        """Lens distortion. A simulated camera has none."""
         return np.zeros(5)
 
     def get_lidar(self): #gets where the red dot is in the world rn
@@ -114,16 +112,13 @@ class Environment:
                 ranges[i] = dist + self.rng.normal(0, config.LIDAR_NOISE)
         return self.lidar_angles, ranges
 
-    # ---------- known map (no longer used by the robot, only by old tools) ----------
+    # ---------- dock position (evaluate.py and test tools only, not the robot) ----------
     def get_dock_position(self):
-        """Dock position (x, y) in the world frame. The robot no longer uses this: it finds the marker itself."""
         return self.m.body("dock").pos[:2].copy()
 
     # ---------- EVALUATION ONLY ----------
     def get_ground_truth(self):
-        """EVALUATION ONLY. 
-        **Not to be pasted to estimator or controller**
-        Returns (x, y, yaw) in the world frame."""
+        """EVALUATION ONLY: true (x, y, yaw), never used by the estimator or controller."""
         a = self._base_qadr
         x, y = self.d.qpos[a], self.d.qpos[a + 1]
         w, qx, qy, qz = self.d.qpos[a + 3:a + 7]
@@ -132,8 +127,7 @@ class Environment:
 
 
     def marker_frame_in_world(self):
-        """EVALUATION / DISPLAY ONLY. Where the marker's face is in the world, and which way it points.
-        Returns ((x, y), angle). The robot never uses this; we use it to grade it and to draw on screen."""
+        """EVALUATION / DISPLAY ONLY: marker face position and direction in the world."""
         g = self.m.geom("dock_marker").id
         rot = self.d.geom_xmat[g].reshape(3, 3)
         normal = -rot[:2, 0]                                  # the face that looks into the room
@@ -142,8 +136,7 @@ class Environment:
         return centre, math.atan2(normal[1], normal[0])
 
     def get_ground_truth_marker_frame(self):
-        """EVALUATION ONLY. True (x, y, yaw) measured from the marker: marker at (0, 0), face along +x.
-        Same frame the EKF uses, so the two can be compared."""
+        """EVALUATION ONLY: true pose in the marker frame, to compare with the EKF."""
         (cx, cy), psi = self.marker_frame_in_world()
         x, y, yaw = self.get_ground_truth()
         dx, dy = x - cx, y - cy
@@ -152,7 +145,7 @@ class Environment:
                          (yaw - psi + math.pi) % (2 * math.pi) - math.pi])
 
     def marker_to_world(self, xy):
-        """DISPLAY ONLY. Turn a marker-frame point into world coordinates so it can be drawn."""
+        """DISPLAY ONLY: marker frame -> world, for drawing."""
         (cx, cy), psi = self.marker_frame_in_world()
         c, s = math.cos(psi), math.sin(psi)
         return np.array([cx + c * xy[0] - s * xy[1], cy + s * xy[0] + c * xy[1]])

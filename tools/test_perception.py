@@ -1,4 +1,4 @@
-"""Task 1 check: does detect_marker give the right range and bearing?"""
+"""Check: does detect_marker give the right range and bearing?"""
 import math
 
 import cv2

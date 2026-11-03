@@ -1,7 +1,4 @@
-"""Make the ArUco marker to PRINT for the real robot (ID 0, DICT_4X4_50).
-
-Not flipped: the flip in make_marker.py is only because MuJoCo mirrors the picture on the box.
-Print it so the black square is MARKER_SIZE wide (20 cm by default) and measure it after printing.
+"""ArUco marker ID 0 to print for the real robot (not mirrored). Set MARKER_SIZE to the measured black square.
   python -m tools.make_marker_print
 """
 import cv2

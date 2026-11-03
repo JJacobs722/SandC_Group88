@@ -1,14 +1,5 @@
-"""How much does the Waffle Pi move when it spins on the spot?
-
-The wheel model says opposite wheel speeds = turn in place, zero movement.
-But the Waffle's body sits behind its wheels and drags on the caster balls,
-so the wheel midpoint shuffles around while it turns. The wheels can't see this.
-
-This spins the robot at a few speeds and measures how far the wheel midpoint wanders.
-The result sets k_turn in the EKF (variance added per radian turned).
-
-Ground truth is used here to measure the robot only, never by the robot itself.
-Run from the top folder:  python -m tools.turn_slip
+"""How far the Waffle Pi's wheel midpoint wanders when it spins, sets k_turn in the EKF.
+  python -m tools.turn_slip
 """
 import numpy as np
 

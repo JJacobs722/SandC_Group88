@@ -1,10 +1,4 @@
-"""Perception: turns a camera picture into the range and bearing of the dock marker.
-
-What goes in:  an RGB camera image and the camera's K matrix
-What comes out: (range_m, bearing_rad) measured from the ROBOT'S CENTRE,
-                or None if the marker can't be seen.
-                range is in metres, bearing in radians, positive = marker is to the LEFT.
-"""
+"""Camera image -> range, bearing (and facing) of the dock marker."""
 
 import math
 
@@ -16,9 +10,9 @@ from src.sim import config
 # ---------- fixed numbers ----------
 CAM_FORWARD = 0.07   # m: camera sits 7 cm in front of the robot's centre (robot file, front_cam pos)
 CAM_LEFT = 0.0       # m: camera sits on the centre line in the sim
-CAM_DIST = np.zeros(5)  # lens distortion: none in the sim, measured on the real camera
+CAM_DIST = np.zeros(5)  # lens distortion (0 in sim)
 
-# Measured in Task 4 (perception_noise.py). Update these if you re-measure.
+# Measured with tools/perception_noise.py. Update these if you re-measure.
 RANGE_NOISE_K = 0.0099     # range spread grows with distance: std = RANGE_NOISE_K * range^2
 BEARING_NOISE_STD = 0.0013  # rad: bearing spread stays about the same at every distance
 RANGE_NOISE_FLOOR = 0.005   # m: never claim to be better than 5 mm
@@ -40,8 +34,7 @@ MARKER_CORNERS_3D = _corners_3d(MARKER_SIZE)
 
 
 def set_camera_setup(forward, left=0.0, dist=None, marker_size=None):
-    """Tell perception where the camera is and what lens it has. Same call for sim and real robot:
-    run_dock.py passes env.get_camera_mount() and env.get_camera_distortion()."""
+    """Camera position and lens, same call for sim and real robot."""
     global CAM_FORWARD, CAM_LEFT, CAM_DIST, MARKER_SIZE, MARKER_CORNERS_3D
     CAM_FORWARD, CAM_LEFT = float(forward), float(left)
     CAM_DIST = np.zeros(5) if dist is None else np.asarray(dist, dtype=np.float64).ravel()
@@ -56,7 +49,7 @@ _default_rng = np.random.default_rng()
 def _build_detector(refine_corners):
     params = cv2.aruco.DetectorParameters()
     if refine_corners:
-        # Nudges each corner to the exact edge, to a fraction of a pixel. Big accuracy gain (Task 2).
+        # Nudges each corner to the exact edge, to a fraction of a pixel. (see tools/perception_accuracy.py)
         params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
     return cv2.aruco.ArucoDetector(_dictionary, params)
 
@@ -65,7 +58,7 @@ _detector = _build_detector(refine_corners=True)
 
 
 def set_corner_refinement(on):
-    """Turn corner refinement on or off. Only used to compare accuracy in Task 2."""
+    """Turn corner refinement on or off. Only used in tools/perception_accuracy.py."""
     global _detector
     _detector = _build_detector(refine_corners=on)
 
@@ -119,13 +112,7 @@ def detect_marker(image, K, rng=None):
 
 
 def detect_marker_pose(image, K, rng=None):
-    """Same as detect_marker, plus which way the marker is facing.
-
-    Returns (range_m, bearing_rad, facing_rad) or None.
-    facing_rad is the direction the marker's face points, seen from the robot.
-    pi means the marker is facing straight back at the robot.
-    This is what lets the robot work out its own heading from one sighting.
-    """
+    """Same as detect_marker, plus facing_rad (pi = marker facing straight at the robot)."""
     found = _find_marker(image, K, rng)
     if found is None:
         return None
@@ -150,10 +137,7 @@ def measurement_covariance(range_m):
 
 
 def marker_covariance(range_m):
-    """The R matrix for a detect_marker_pose reading: [range, bearing, facing].
-
-    Range and bearing noise are the same as measurement_covariance.
-    """
+    """R for [range, bearing, facing]."""
     R2 = measurement_covariance(range_m)
     std_facing = min(max(FACING_NOISE_K * range_m ** 2, FACING_NOISE_FLOOR), FACING_NOISE_CAP)
     return np.diag([R2[0, 0], R2[1, 1], std_facing ** 2])

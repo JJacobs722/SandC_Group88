@@ -1,12 +1,4 @@
-"""Calibrate the REAL wheels, the same idea as tools/calibrate_wheels.py but with a tape measure
-instead of ground truth (a real robot has none).
-
-Test 1: the robot drives forward until its wheels say 1.0 m. You measure how far it really went.
-Test 2: the robot spins until its wheels say 3 full turns. You count how far it really turned.
-Prints WHEEL_RADIUS and WHEEL_BASE to paste into src/hw/hw_config.py.
-
-Needs 1.5 m clear in front. Put tape on the floor at the robot's front edge first,
-and a tape line pointing the way the robot faces for the spin test.
+"""Calibrate the real wheels with a tape measure (drive 1 m, spin 3 turns).
   python -m tools.calibrate_wheels_real
 """
 import math

@@ -1,4 +1,4 @@
-"""Task 5: draw a checkerboard picture for camera calibration.
+"""Draw a checkerboard picture for camera calibration.
 
 10 x 7 squares (so 9 x 6 inner corners where four squares meet), plus a white border.
 On the board in the simulation each square is 2.5 cm.
